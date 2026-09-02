@@ -19,10 +19,12 @@
 #include "autoware/lidar_centerpoint/preprocess/preprocess_kernel.hpp"
 
 #include <autoware/cuda_utils/cuda_utils.hpp>
+#include <autoware/point_types/memory.hpp>
 #include <autoware_utils/math/constants.hpp>
 #include <autoware_utils/ros/diagnostics_interface.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
@@ -35,6 +37,10 @@
 
 namespace autoware::lidar_centerpoint
 {
+
+/// Number of fields in an exact PointXYZIRC layout.
+constexpr std::size_t kNumPointXYZIRCFields = 6;
+
 CenterPointTRT::CenterPointTRT(
   const TrtCommonConfig & encoder_param, const TrtCommonConfig & head_param,
   const DensificationParam & densification_param, const CenterPointConfig & config)
@@ -211,11 +217,39 @@ bool CenterPointTRT::detect(
   return true;
 }
 
+bool CenterPointTRT::validatePointCloud(
+  const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & input_pointcloud_msg_ptr) const
+{
+  // The voxel generator reinterprets the point cloud buffer as an array of InputPointType, so a
+  // layout that merely *starts* with the PointXYZIRC fields is not sufficient: a wider point type
+  // (e.g. PointXYZIRCAEDT) passes the prefix check but would be read at the wrong stride, silently
+  // producing detections from misinterpreted data. Require an exact PointXYZIRC layout.
+  if (
+    !autoware::point_types::is_data_layout_compatible_with_point_xyzirc(
+      input_pointcloud_msg_ptr->fields) ||
+    input_pointcloud_msg_ptr->fields.size() != kNumPointXYZIRCFields ||
+    input_pointcloud_msg_ptr->point_step != sizeof(InputPointType)) {
+    RCLCPP_ERROR(
+      rclcpp::get_logger(config_.logger_name_.c_str()),
+      "Invalid point type: expected an exact PointXYZIRC layout (%zu fields, point_step %zu), got "
+      "%zu fields with point_step %u. Skipping detection.",
+      kNumPointXYZIRCFields, sizeof(InputPointType), input_pointcloud_msg_ptr->fields.size(),
+      input_pointcloud_msg_ptr->point_step);
+    return false;
+  }
+
+  return true;
+}
+
 bool CenterPointTRT::preprocess(
   const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & input_pointcloud_msg_ptr,
   const tf2_ros::Buffer & tf_buffer)
 {
   using autoware::cuda_utils::clear_async;
+
+  if (!validatePointCloud(input_pointcloud_msg_ptr)) {
+    return false;
+  }
 
   bool is_success = vg_ptr_->enqueuePointCloud(input_pointcloud_msg_ptr, tf_buffer);
   if (!is_success) {

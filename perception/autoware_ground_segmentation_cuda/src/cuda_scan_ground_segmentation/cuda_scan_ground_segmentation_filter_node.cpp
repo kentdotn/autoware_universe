@@ -18,10 +18,33 @@
 
 #include <autoware_utils/math/unit_conversion.hpp>
 
+#include <cstddef>
+
 namespace autoware::cuda_ground_segmentation
 {
 
 using autoware_utils::deg2rad;
+
+namespace
+{
+/// Number of fields in an exact PointXYZIRC layout.
+constexpr std::size_t kNumPointXYZIRCFields = 6;
+
+/// @brief Check that a cloud can be consumed as a packed array of PointTypeStruct.
+///
+/// The filter kernels reinterpret the point cloud buffer as an array of PointTypeStruct, so a
+/// layout that merely *starts* with the PointXYZIRC fields is not sufficient: a wider point type
+/// (e.g. PointXYZIRCAEDT) passes the prefix check but would be read at the wrong stride, silently
+/// segmenting misinterpreted data. Require an exact PointXYZIRC layout.
+bool is_supported_layout(const cuda_blackboard::CudaPointCloud2 & cloud)
+{
+  return autoware::pointcloud_preprocessor::utils::is_data_layout_compatible_with_point_xyzirc(
+           cloud.fields) &&
+         cloud.fields.size() == kNumPointXYZIRCFields &&
+         cloud.point_step == sizeof(PointTypeStruct);
+}
+}  // namespace
+
 CudaScanGroundSegmentationFilterNode::CudaScanGroundSegmentationFilterNode(
   const rclcpp::NodeOptions & options)
 : Node("cuda_scan_ground_segmentation_filter_node", options)
@@ -118,6 +141,15 @@ CudaScanGroundSegmentationFilterNode::CudaScanGroundSegmentationFilterNode(
 void CudaScanGroundSegmentationFilterNode::cudaPointCloudCallback(
   const cuda_blackboard::CudaPointCloud2::ConstSharedPtr & msg)
 {
+  if (!is_supported_layout(*msg)) {
+    RCLCPP_ERROR_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "Invalid point type: expected an exact PointXYZIRC layout (%zu fields, point_step %zu), got "
+      "%zu fields with point_step %u. Skipping this point cloud.",
+      kNumPointXYZIRCFields, sizeof(PointTypeStruct), msg->fields.size(), msg->point_step);
+    return;
+  }
+
   // start time measurement
   if (stop_watch_ptr_) {
     stop_watch_ptr_->tic("processing_time");

@@ -38,6 +38,9 @@
 namespace autoware::bevfusion
 {
 
+/// Number of fields in an exact PointXYZIRC layout.
+constexpr std::size_t kNumPointXYZIRCFields = 6;
+
 BEVFusionTRT::BEVFusionTRT(
   const TrtBEVFusionConfig & trt_config, const DensificationParam & densification_param,
   const BEVFusionConfig & config)
@@ -470,8 +473,20 @@ void BEVFusionTRT::setIntrinsicsExtrinsics(
 bool BEVFusionTRT::validatePointCloud(
   const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & pc_msg_ptr)
 {
-  if (!autoware::point_types::is_data_layout_compatible_with_point_xyzirc(pc_msg_ptr->fields)) {
-    RCLCPP_ERROR(rclcpp::get_logger("bevfusion"), "Invalid point type. Skipping detection.");
+  // The voxel generator reinterprets the point cloud buffer as an array of InputPointType, so a
+  // layout that merely *starts* with the PointXYZIRC fields is not sufficient: a wider point type
+  // (e.g. PointXYZIRCAEDT) passes the prefix check but would be read at the wrong stride, silently
+  // producing detections from misinterpreted data. Require an exact PointXYZIRC layout.
+  if (
+    !autoware::point_types::is_data_layout_compatible_with_point_xyzirc(pc_msg_ptr->fields) ||
+    pc_msg_ptr->fields.size() != kNumPointXYZIRCFields ||
+    pc_msg_ptr->point_step != sizeof(InputPointType)) {
+    RCLCPP_ERROR(
+      rclcpp::get_logger("bevfusion"),
+      "Invalid point type: expected an exact PointXYZIRC layout (%zu fields, point_step %zu), got "
+      "%zu fields with point_step %u. Skipping detection.",
+      kNumPointXYZIRCFields, sizeof(InputPointType), pc_msg_ptr->fields.size(),
+      pc_msg_ptr->point_step);
     return false;
   }
 

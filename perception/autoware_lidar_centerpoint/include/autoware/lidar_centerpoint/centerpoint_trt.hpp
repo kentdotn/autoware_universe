@@ -54,6 +54,11 @@ protected:
   void initPtr();
   void initTrt(const TrtCommonConfig & encoder_param, const TrtCommonConfig & head_param);
 
+  /// @brief Check that the input point cloud has an exact PointXYZIRC layout.
+  /// @return True if the cloud can be consumed as an array of InputPointType.
+  bool validatePointCloud(
+    const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & input_pointcloud_msg_ptr) const;
+
   virtual bool preprocess(
     const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & input_pointcloud_msg_ptr,
     const tf2_ros::Buffer & tf_buffer);
