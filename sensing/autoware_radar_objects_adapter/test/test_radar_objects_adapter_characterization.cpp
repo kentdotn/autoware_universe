@@ -981,12 +981,7 @@ TEST_F(RadarObjectsAdapterCharacterization, Tracks_MovementStatus_OnlyDynamicIsM
 
 // The acceleration gets the same treatment as the velocity: rotated into the object's frame
 // together with its x/y covariance. The detected object has no acceleration, so this is only
-// checked here.
-//
-// acceleration.z is deliberately not pinned. The flag that would select between the object's
-// value and the default_acceleration_z parameter is never set by the node (it is read
-// uninitialized), so the z component is not defined today. This is a defect to fix before the
-// logic moves, and the test that pins the fixed behavior comes with that fix.
+// checked here. The z component is not rotated and is pinned by the two cases that follow.
 TEST_F(RadarObjectsAdapterCharacterization, Tracks_Acceleration_RotatedByYaw)
 {
   RadarObject radar = facing(make_radar_object(), quarter_turn);
@@ -1009,6 +1004,35 @@ TEST_F(RadarObjectsAdapterCharacterization, Tracks_Acceleration_RotatedByYaw)
   EXPECT_NEAR(acceleration.covariance[cov_y_x], -0.5, covariance_tolerance);
   EXPECT_TRUE(
     only_these_entries_set(acceleration.covariance, {cov_x_x, cov_x_y, cov_y_x, cov_y_y}));
+}
+
+// Like the other z components, acceleration.z is copied from the object when the radar info
+// declares acceleration_z ...
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_AccelerationZ_Declared_CopiedFromObject)
+{
+  const RadarObject radar = make_radar_object();
+
+  const auto converted = convert(make_radar_info(all_fields), {radar});
+  ASSERT_TRUE(converted.has_value());
+
+  const auto & linear =
+    converted->tracks.objects.at(0).kinematics.acceleration_with_covariance.accel.linear;
+  EXPECT_DOUBLE_EQ(linear.z, radar.acceleration.z);
+}
+
+// ... and filled from default_acceleration_z when it does not. An ARS548 does not declare it, so
+// this is the path taken on the vehicle.
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_AccelerationZ_Undeclared_FilledFromParameter)
+{
+  const DefaultParameters defaults;
+
+  const auto converted =
+    convert(make_radar_info(ars548_fields), {make_radar_object()}, defaults.to_options());
+  ASSERT_TRUE(converted.has_value());
+
+  const auto & linear =
+    converted->tracks.objects.at(0).kinematics.acceleration_with_covariance.accel.linear;
+  EXPECT_DOUBLE_EQ(linear.z, defaults.acceleration_z);
 }
 
 // Everything a tracked object shares with a detected object is filled in identically for the
