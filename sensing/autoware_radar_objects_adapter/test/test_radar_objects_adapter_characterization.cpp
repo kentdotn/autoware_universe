@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Characterization tests for RadarObjectsAdapter.
+// Characterization tests for RadarObjectsAdapterNode.
 //
 // These tests pin the behavior of the node as it is today, before its logic is separated from the
 // node class. They drive the node over its real topics: a radar info message and radar objects are
@@ -49,7 +49,7 @@
 
 namespace
 {
-using autoware::RadarObjectsAdapter;
+using autoware::radar_objects_adapter::RadarObjectsAdapterNode;
 using autoware_perception_msgs::msg::DetectedObject;
 using autoware_perception_msgs::msg::DetectedObjectKinematics;
 using autoware_perception_msgs::msg::DetectedObjects;
@@ -295,7 +295,7 @@ protected:
 
   void start_node(const rclcpp::NodeOptions & options = DefaultParameters{}.to_options())
   {
-    node_ = std::make_shared<RadarObjectsAdapter>(options);
+    node_ = std::make_shared<RadarObjectsAdapterNode>(options);
     peer_ = std::make_shared<rclcpp::Node>("characterization_peer");
 
     // The node subscribes to both inputs with sensor data QoS.
@@ -409,7 +409,7 @@ protected:
     return options;
   }
 
-  std::shared_ptr<RadarObjectsAdapter> node_;
+  std::shared_ptr<RadarObjectsAdapterNode> node_;
   std::shared_ptr<rclcpp::Node> peer_;
   rclcpp::Publisher<RadarObjects>::SharedPtr objects_pub_;
   rclcpp::Publisher<RadarInfo>::SharedPtr radar_info_pub_;
@@ -429,7 +429,7 @@ TEST_F(RadarObjectsAdapterCharacterization, Construct_DefaultParameterMissing_Th
   for (const auto & name : DefaultParameters::names()) {
     SCOPED_TRACE(name);
     EXPECT_THROW(
-      std::make_shared<RadarObjectsAdapter>(DefaultParameters{}.to_options_without(name)),
+      std::make_shared<RadarObjectsAdapterNode>(DefaultParameters{}.to_options_without(name)),
       std::exception);
   }
 }
@@ -439,7 +439,7 @@ TEST_F(RadarObjectsAdapterCharacterization, Construct_DefaultParameterMissing_Th
 // defaults map to is pinned with the classification tests.
 TEST_F(RadarObjectsAdapterCharacterization, Construct_RemapParametersOmitted_Constructs)
 {
-  EXPECT_NO_THROW(std::make_shared<RadarObjectsAdapter>(DefaultParameters{}.to_options()));
+  EXPECT_NO_THROW(std::make_shared<RadarObjectsAdapterNode>(DefaultParameters{}.to_options()));
 }
 
 // The node subscribes to its two inputs and advertises its two outputs right away, under the
