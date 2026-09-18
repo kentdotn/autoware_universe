@@ -39,6 +39,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -55,6 +56,7 @@ using autoware_perception_msgs::msg::DetectedObjects;
 using autoware_perception_msgs::msg::ObjectClassification;
 using autoware_perception_msgs::msg::Shape;
 using autoware_perception_msgs::msg::TrackedObject;
+using autoware_perception_msgs::msg::TrackedObjectKinematics;
 using autoware_perception_msgs::msg::TrackedObjects;
 using autoware_sensing_msgs::msg::RadarClassification;
 using autoware_sensing_msgs::msg::RadarFieldInfo;
@@ -892,4 +894,143 @@ TEST_F(RadarObjectsAdapterCharacterization, Classification_UnknownLabelInParamet
 
   const std::vector<LabeledProbability> expected = {{ObjectClassification::UNKNOWN, 0.8f}};
   EXPECT_EQ(labeled_probabilities(converted->detections.objects.at(0).classification), expected);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Conversion into tracked objects. The same radar object goes in, and the tracked object made of
+// it is read. It shares pose, twist, shape and classification with the detected object, and adds
+// what a track has over a detection: an identity, an acceleration and a stationary flag.
+// ---------------------------------------------------------------------------------------------
+
+// The 16-byte UUID is assembled from the radar's 32-bit object id, least significant byte first,
+// followed by 8 bytes of a hash of the fully qualified input topic name, again least significant
+// byte first, followed by 4 zero bytes. The hash keeps the ids of two radars apart when their
+// tracks are merged downstream, and it is the same for every object of one node.
+//
+// Both the node and this test take the bytes out of the integers with shifts, so the layout is
+// pinned independently of the byte order of the machine. The hash is std::hash<std::string> of
+// the topic name, so it is recomputed here rather than written down: its value depends on the
+// standard library.
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_Uuid_ObjectIdThenTopicHashThenZeros)
+{
+  constexpr size_t object_id_bytes = 4;
+  constexpr size_t topic_hash_bytes = 8;
+
+  RadarObject first = make_radar_object();
+  first.object_id = 0x04030201u;
+  RadarObject second = make_radar_object();
+  second.object_id = 0x44332211u;
+
+  const auto converted = convert(make_radar_info(ars548_fields), {first, second});
+  ASSERT_TRUE(converted.has_value());
+  const auto & first_uuid = converted->tracks.objects.at(0).object_id.uuid;
+  const auto & second_uuid = converted->tracks.objects.at(1).object_id.uuid;
+
+  // Bytes 0-3: the radar's object id
+  EXPECT_EQ(
+    (std::vector<uint8_t>{first_uuid[0], first_uuid[1], first_uuid[2], first_uuid[3]}),
+    (std::vector<uint8_t>{0x01, 0x02, 0x03, 0x04}));
+  EXPECT_EQ(
+    (std::vector<uint8_t>{second_uuid[0], second_uuid[1], second_uuid[2], second_uuid[3]}),
+    (std::vector<uint8_t>{0x11, 0x22, 0x33, 0x44}));
+
+  // Bytes 4-11: the hash of the input topic name
+  const size_t topic_hash = std::hash<std::string>{}(node_topic("input/objects"));
+  for (size_t i = 0; i < topic_hash_bytes; ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(
+      first_uuid[object_id_bytes + i], static_cast<uint8_t>((topic_hash >> (i * 8)) & 0xFF));
+  }
+
+  // Bytes 12-15: zero
+  for (size_t i = object_id_bytes + topic_hash_bytes; i < first_uuid.size(); ++i) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(first_uuid[i], 0);
+  }
+
+  // Everything after the object id is shared by every object of this node
+  EXPECT_TRUE(
+    std::equal(
+      first_uuid.begin() + object_id_bytes, first_uuid.end(),
+      second_uuid.begin() + object_id_bytes));
+}
+
+// Only an object the radar reports as DYNAMIC is moving; STATIC, but also INVALID and UNKNOWN,
+// are reported as stationary.
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_MovementStatus_OnlyDynamicIsMoving)
+{
+  const auto with_status = [](uint8_t status) {
+    RadarObject radar = make_radar_object();
+    radar.movement_status = status;
+    return radar;
+  };
+
+  const auto converted = convert(
+    make_radar_info(ars548_fields), {with_status(RadarObject::MOVEMENT_STATUS_DYNAMIC),
+                                     with_status(RadarObject::MOVEMENT_STATUS_STATIC),
+                                     with_status(RadarObject::MOVEMENT_STATUS_INVALID),
+                                     with_status(RadarObject::MOVEMENT_STATUS_UNKNOWN)});
+  ASSERT_TRUE(converted.has_value());
+  const auto & tracks = converted->tracks.objects;
+
+  EXPECT_FALSE(tracks.at(0).kinematics.is_stationary);
+  EXPECT_TRUE(tracks.at(1).kinematics.is_stationary);
+  EXPECT_TRUE(tracks.at(2).kinematics.is_stationary);
+  EXPECT_TRUE(tracks.at(3).kinematics.is_stationary);
+}
+
+// The acceleration gets the same treatment as the velocity: rotated into the object's frame
+// together with its x/y covariance. The detected object has no acceleration, so this is only
+// checked here.
+//
+// acceleration.z is deliberately not pinned. The flag that would select between the object's
+// value and the default_acceleration_z parameter is never set by the node (it is read
+// uninitialized), so the z component is not defined today. This is a defect to fix before the
+// logic moves, and the test that pins the fixed behavior comes with that fix.
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_Acceleration_RotatedByYaw)
+{
+  RadarObject radar = facing(make_radar_object(), quarter_turn);
+  radar.acceleration.x = 1.0;
+  radar.acceleration.y = 0.0;
+  radar.acceleration_covariance = {1.0f, 0.5f, 0.0f, 4.0f, 0.0f, 0.0f};
+
+  const auto converted = convert(make_radar_info(ars548_fields), {radar});
+  ASSERT_TRUE(converted.has_value());
+
+  const auto & acceleration =
+    converted->tracks.objects.at(0).kinematics.acceleration_with_covariance;
+  EXPECT_NEAR(acceleration.accel.linear.x, 0.0, 1e-6);
+  EXPECT_NEAR(acceleration.accel.linear.y, -1.0, 1e-6);
+
+  // Variances swapped, covariance negated, like the twist covariance
+  EXPECT_NEAR(acceleration.covariance[cov_x_x], 4.0, covariance_tolerance);
+  EXPECT_NEAR(acceleration.covariance[cov_y_y], 1.0, covariance_tolerance);
+  EXPECT_NEAR(acceleration.covariance[cov_x_y], -0.5, covariance_tolerance);
+  EXPECT_NEAR(acceleration.covariance[cov_y_x], -0.5, covariance_tolerance);
+  EXPECT_TRUE(
+    only_these_entries_set(acceleration.covariance, {cov_x_x, cov_x_y, cov_y_x, cov_y_y}));
+}
+
+// Everything a tracked object shares with a detected object is filled in identically for the
+// same input: existence probability, classification, pose and twist with their covariances,
+// shape, and a fully known orientation. A track is a detection plus identity, acceleration and
+// the stationary flag - nothing else differs.
+TEST_F(RadarObjectsAdapterCharacterization, Tracks_SharedFields_MatchDetection)
+{
+  RadarObject radar = make_radar_object();
+  radar.classifications = {
+    make_classification(RadarClassification::CAR, 0.8f),
+    make_classification(RadarClassification::HAZARD, 0.05f)};
+
+  const auto converted = convert(make_radar_info(ars548_fields), {radar});
+  ASSERT_TRUE(converted.has_value());
+  const TrackedObject & track = converted->tracks.objects.at(0);
+  const DetectedObject & detected = converted->detections.objects.at(0);
+
+  EXPECT_EQ(track.existence_probability, detected.existence_probability);
+  EXPECT_EQ(track.classification, detected.classification);
+  EXPECT_EQ(track.kinematics.pose_with_covariance, detected.kinematics.pose_with_covariance);
+  EXPECT_EQ(track.kinematics.twist_with_covariance, detected.kinematics.twist_with_covariance);
+  EXPECT_EQ(track.shape, detected.shape);
+  EXPECT_EQ(track.kinematics.orientation_availability, TrackedObjectKinematics::AVAILABLE);
 }
