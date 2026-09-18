@@ -43,6 +43,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -51,6 +52,7 @@ using autoware::RadarObjectsAdapter;
 using autoware_perception_msgs::msg::DetectedObject;
 using autoware_perception_msgs::msg::DetectedObjectKinematics;
 using autoware_perception_msgs::msg::DetectedObjects;
+using autoware_perception_msgs::msg::ObjectClassification;
 using autoware_perception_msgs::msg::Shape;
 using autoware_perception_msgs::msg::TrackedObject;
 using autoware_perception_msgs::msg::TrackedObjects;
@@ -392,6 +394,17 @@ protected:
       return std::nullopt;
     }
     return Converted{*detections_.back(), *tracks_.back()};
+  }
+
+  // Parameter overrides that remap the given radar labels, on top of the six required parameters.
+  static rclcpp::NodeOptions remap_options(
+    const std::vector<std::pair<std::string, std::string>> & radar_to_perception_labels)
+  {
+    rclcpp::NodeOptions options = DefaultParameters{}.to_options();
+    for (const auto & [radar_label, perception_label] : radar_to_perception_labels) {
+      options.append_parameter_override("classification_remap." + radar_label, perception_label);
+    }
+    return options;
   }
 
   std::shared_ptr<RadarObjectsAdapter> node_;
@@ -756,4 +769,127 @@ TEST_F(RadarObjectsAdapterCharacterization, Detections_InvalidCovariance_MaskedT
   EXPECT_GT(kinematics.pose_with_covariance.covariance[cov_yaw_yaw], 0.0);
   EXPECT_TRUE(only_these_entries_set(kinematics.twist_with_covariance.covariance, {cov_yaw_yaw}));
   EXPECT_GT(kinematics.twist_with_covariance.covariance[cov_yaw_yaw], 0.0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Classification. Each radar classification (a label with a probability) becomes one perception
+// classification; the label is looked up in the classification_remap table and the probability
+// is copied. The tests read the detected object; the tracked object gets the same list, which is
+// pinned with the tracked object tests.
+// ---------------------------------------------------------------------------------------------
+
+namespace
+{
+// A classification list as (label, probability) pairs, so that a test can state the whole
+// expected list in one place.
+using LabeledProbability = std::pair<uint8_t, float>;
+
+std::vector<LabeledProbability> labeled_probabilities(
+  const std::vector<ObjectClassification> & classifications)
+{
+  std::vector<LabeledProbability> result;
+  for (const auto & classification : classifications) {
+    result.emplace_back(classification.label, classification.probability);
+  }
+  return result;
+}
+}  // namespace
+
+// Without any classification_remap.* parameter, the built-in table keeps every label as it is
+// except HAZARD, which the perception pipeline has no label for and which becomes UNKNOWN. The
+// order of the list and the probabilities are preserved.
+//
+// This is the built-in default, not the shipped configuration: the parameter file in config/
+// additionally remaps MOTORCYCLE and BICYCLE, which the next test covers.
+TEST_F(RadarObjectsAdapterCharacterization, Classification_BuiltInRemap_LabelsKeptExceptHazard)
+{
+  RadarObject radar = make_radar_object();
+  radar.classifications = {
+    make_classification(RadarClassification::CAR, 0.8f),
+    make_classification(RadarClassification::TRUCK, 0.1f),
+    make_classification(RadarClassification::MOTORCYCLE, 0.3f),
+    make_classification(RadarClassification::HAZARD, 0.05f),
+    make_classification(RadarClassification::PEDESTRIAN, 0.02f)};
+
+  const auto converted = convert(make_radar_info(ars548_fields), {radar});
+  ASSERT_TRUE(converted.has_value());
+
+  const std::vector<LabeledProbability> expected = {
+    {ObjectClassification::CAR, 0.8f},
+    {ObjectClassification::TRUCK, 0.1f},
+    {ObjectClassification::MOTORCYCLE, 0.3f},
+    {ObjectClassification::UNKNOWN, 0.05f},
+    {ObjectClassification::PEDESTRIAN, 0.02f}};
+  EXPECT_EQ(labeled_probabilities(converted->detections.objects.at(0).classification), expected);
+}
+
+// The shipped parameter file remaps MOTORCYCLE and BICYCLE to CAR, because a radar tends to
+// report a far car as a two-wheeler. The remap works entry by entry: an object that carries a
+// CAR, a MOTORCYCLE and a BICYCLE probability comes out with three CAR entries, each with its own
+// probability, while labels the remap does not mention (TRUCK, PEDESTRIAN) stay as they are.
+//
+// NOTE(characterization): the duplicate labels are pinned as they are. The README notes them as
+// harmless for the current consumers; merging the probabilities is a candidate change for later.
+TEST_F(RadarObjectsAdapterCharacterization, Classification_ConfiguredRemap_TwoWheelersBecomeCar)
+{
+  RadarObject radar = make_radar_object();
+  radar.classifications = {
+    make_classification(RadarClassification::CAR, 0.5f),
+    make_classification(RadarClassification::TRUCK, 0.1f),
+    make_classification(RadarClassification::MOTORCYCLE, 0.8f),
+    make_classification(RadarClassification::BICYCLE, 0.3f),
+    make_classification(RadarClassification::PEDESTRIAN, 0.02f)};
+
+  const auto converted = convert(
+    make_radar_info(ars548_fields), {radar},
+    remap_options({{"MOTORCYCLE", "CAR"}, {"BICYCLE", "CAR"}}));
+  ASSERT_TRUE(converted.has_value());
+
+  const std::vector<LabeledProbability> expected = {
+    {ObjectClassification::CAR, 0.5f},
+    {ObjectClassification::TRUCK, 0.1f},
+    {ObjectClassification::CAR, 0.8f},
+    {ObjectClassification::CAR, 0.3f},
+    {ObjectClassification::PEDESTRIAN, 0.02f}};
+  EXPECT_EQ(labeled_probabilities(converted->detections.objects.at(0).classification), expected);
+}
+
+// The remap table has entries for eight of the twelve radar labels. A label without an entry -
+// BUS, TRAILER, OVER_DRIVABLE and UNDER_DRIVABLE - becomes UNKNOWN, keeping its probability. An
+// ARS548 does not report these labels, so this path is not taken on the vehicle.
+TEST_F(RadarObjectsAdapterCharacterization, Classification_LabelWithoutRemapEntry_BecomesUnknown)
+{
+  RadarObject radar = make_radar_object();
+  radar.classifications = {
+    make_classification(RadarClassification::BUS, 0.7f),
+    make_classification(RadarClassification::TRAILER, 0.2f),
+    make_classification(RadarClassification::OVER_DRIVABLE, 0.1f),
+    make_classification(RadarClassification::UNDER_DRIVABLE, 0.05f)};
+
+  const auto converted = convert(make_radar_info(ars548_fields), {radar});
+  ASSERT_TRUE(converted.has_value());
+
+  const std::vector<LabeledProbability> expected = {
+    {ObjectClassification::UNKNOWN, 0.7f},
+    {ObjectClassification::UNKNOWN, 0.2f},
+    {ObjectClassification::UNKNOWN, 0.1f},
+    {ObjectClassification::UNKNOWN, 0.05f}};
+  EXPECT_EQ(labeled_probabilities(converted->detections.objects.at(0).classification), expected);
+}
+
+// A classification_remap.* value that is not a perception label name is not an error: the node
+// starts, warns once, and maps that radar label to UNKNOWN.
+//
+// The warning is not pinned.
+TEST_F(RadarObjectsAdapterCharacterization, Classification_UnknownLabelInParameter_MapsToUnknown)
+{
+  RadarObject radar = make_radar_object();
+  radar.classifications = {make_classification(RadarClassification::CAR, 0.8f)};
+
+  const auto converted =
+    convert(make_radar_info(ars548_fields), {radar}, remap_options({{"CAR", "SPACESHIP"}}));
+  ASSERT_TRUE(converted.has_value());
+
+  const std::vector<LabeledProbability> expected = {{ObjectClassification::UNKNOWN, 0.8f}};
+  EXPECT_EQ(labeled_probabilities(converted->detections.objects.at(0).classification), expected);
 }
