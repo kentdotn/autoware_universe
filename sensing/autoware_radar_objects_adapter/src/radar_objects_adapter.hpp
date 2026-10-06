@@ -53,6 +53,31 @@ ClassificationRemap make_classification_remap_from_string_pair(
   const std::map<std::string, std::string> & classification_remap_str,
   std::map<std::string, std::string> & unknown_perception_labels);
 
+// The remap every radar needs, whatever it reports: the labels the perception pipeline has no
+// use for (HAZARD, OVER_DRIVABLE, UNDER_DRIVABLE) become UNKNOWN.
+ClassificationRemap perception_friendly_classification_remap();
+
+// Turns the classifications of a radar object into perception classifications: one entry per
+// radar entry, in order, with the probability copied and the label looked up in one table. The
+// table is the perception-friendly remap with the sensor-dependent one laid over it (the
+// classification_remap parameters, which correct what the radar in use is known to report
+// unreliably), so that the sensor's entry wins where both say something. A label neither
+// mentions becomes UNKNOWN.
+class ClassificationRemapper
+{
+public:
+  ClassificationRemapper(
+    const ClassificationRemap & perception_friendly, const ClassificationRemap & sensor_dependent);
+
+  std::vector<autoware_perception_msgs::msg::ObjectClassification> operator()(
+    const std::vector<autoware_sensing_msgs::msg::RadarClassification> & classifications) const;
+
+  const ClassificationRemap & combined() const { return combined_; }
+
+private:
+  ClassificationRemap combined_;
+};
+
 // Makes a tracked object's UUID out of the radar's 32-bit object id: the id, least significant
 // byte first, then the hash of the input topic name, least significant byte first, then zeros.
 // The hash tells the tracks of one radar from those of another when they are merged downstream.
@@ -152,11 +177,6 @@ private:
     const autoware_sensing_msgs::msg::RadarObject & input_object, ObjectType & output_object,
     const float yaw) const;
 
-  void populate_classifications(
-    const std::vector<autoware_sensing_msgs::msg::RadarClassification> & input_classifications,
-    std::vector<autoware_perception_msgs::msg::ObjectClassification> & output_classifications)
-    const;
-
   autoware_perception_msgs::msg::DetectedObjects to_detected_objects(
     const autoware_sensing_msgs::msg::RadarObjects & input_msg) const;
   autoware_perception_msgs::msg::TrackedObjects to_tracked_objects(
@@ -183,7 +203,7 @@ private:
   bool orientation_std_available_{false};
   bool orientation_rate_std_available_{false};
 
-  std::map<std::uint8_t, std::uint8_t> classification_remap_;
+  ClassificationRemapper classification_remapper_;
 };
 
 }  // namespace autoware::radar_objects_adapter
