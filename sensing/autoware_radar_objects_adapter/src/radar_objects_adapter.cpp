@@ -14,9 +14,9 @@
 
 #include "radar_objects_adapter.hpp"
 
+#include <autoware/object_recognition_utils/conversion.hpp>
 #include <autoware_utils_geometry/geometry.hpp>
 
-#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -138,91 +138,14 @@ std::vector<autoware_perception_msgs::msg::ObjectClassification> ClassificationR
   return output;
 }
 
-RadarObjectsAdapter::RadarObjectsAdapter(
-  const RadarObjectsAdapterParams & params, const ClassificationRemap & classification_remap,
-  const std::string & topic_name)
-: params_(params),
-  generate_uuid_(ObjectUUIDGenerator(topic_name)),
-  classification_remapper_(perception_friendly_classification_remap(), classification_remap)
+TrackedObjectConverter::TrackedObjectConverter(
+  const RadarObjectsAdapterParams & params, const RadarFieldAvailability & availability,
+  GenerateObjectUUID generate_uuid)
+: params_(params), availability_(availability), generate_uuid_(std::move(generate_uuid))
 {
-  required_attributes_ = {
-    "existence_probability", "position_x",     "position_y", "velocity_x", "velocity_y",
-    "acceleration_x",        "acceleration_y", "orientation"};
 }
 
-RadarObjectsAdapter::RadarInfoResult RadarObjectsAdapter::update_radar_info(
-  const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg)
-{
-  for (const auto & field_info : radar_info_msg.object_fields_info) {
-    field_info_map_[field_info.field_name.data] = field_info;
-  }
-
-  valid_radar_info_ = std::all_of(
-    required_attributes_.begin(), required_attributes_.end(),
-    [this](const std::string & attribute) {
-      return field_info_map_.find(attribute) != field_info_map_.end();
-    });
-
-  if (!valid_radar_info_) {
-    RadarInfoResult result;
-    for (const auto & attribute : required_attributes_) {
-      if (field_info_map_.find(attribute) == field_info_map_.end()) {
-        result.missing_required_fields.push_back(attribute);
-      }
-    }
-    return result;
-  }
-
-  position_z_available_ = field_info_map_.count("position_z") > 0;
-  velocity_z_available_ = field_info_map_.count("velocity_z") > 0;
-  acceleration_z_available_ = field_info_map_.count("acceleration_z") > 0;
-  size_x_available_ = field_info_map_.count("size_x") > 0;
-  size_y_available_ = field_info_map_.count("size_y") > 0;
-  size_z_available_ = field_info_map_.count("size_z") > 0;
-
-  orientation_std_available_ = field_info_map_.count("orientation_std") > 0;
-  orientation_rate_std_available_ = field_info_map_.count("orientation_rate_std") > 0;
-
-  // The fields filled from a parameter, in the order the node has always warned about them.
-  // orientation_std and orientation_rate_std have no parameter: without them the yaw variances
-  // stay zero, and that has never been warned about.
-  RadarInfoResult result;
-  if (!position_z_available_) {
-    result.defaulted_fields.emplace_back("position_z", params_.default_position_z);
-  }
-  if (!velocity_z_available_) {
-    result.defaulted_fields.emplace_back("velocity_z", params_.default_velocity_z);
-  }
-  if (!acceleration_z_available_) {
-    result.defaulted_fields.emplace_back("acceleration_z", params_.default_acceleration_z);
-  }
-  if (!size_x_available_) {
-    result.defaulted_fields.emplace_back("size_x", params_.default_size_x);
-  }
-  if (!size_y_available_) {
-    result.defaulted_fields.emplace_back("size_y", params_.default_size_y);
-  }
-  if (!size_z_available_) {
-    result.defaulted_fields.emplace_back("size_z", params_.default_size_z);
-  }
-  return result;
-}
-
-RadarObjectsAdapter::Result RadarObjectsAdapter::convert(
-  const autoware_sensing_msgs::msg::RadarObjects & input_msg) const
-{
-  if (!valid_radar_info_) {
-    return {Outcome::NoValidRadarInfo, {}, {}};
-  }
-
-  // publish both detections and tracks
-  auto detected_objects = this->to_detected_objects(input_msg);
-  auto tracked_objects = this->to_tracked_objects(input_msg);
-
-  return {Outcome::Converted, detected_objects, tracked_objects};
-}
-
-void RadarObjectsAdapter::radar_cov_to_detection_pose_cov(
+void TrackedObjectConverter::radar_cov_to_detection_pose_cov(
   const std::array<float, 6> & radar_pose_cov, const double orientation_std,
   std::array<double, 36> & pose_cov) const
 {
@@ -234,12 +157,12 @@ void RadarObjectsAdapter::radar_cov_to_detection_pose_cov(
   pose_cov[DETECTION_COV_IDX::Y_X] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::X_Y]);
   pose_cov[DETECTION_COV_IDX::Y_Y] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::Y_Y]);
 
-  if (orientation_std_available_) {
+  if (availability_.orientation_std) {
     pose_cov[DETECTION_COV_IDX::YAW_YAW] = static_cast<double>(orientation_std * orientation_std);
   }
 }
 
-void RadarObjectsAdapter::radar_cov_to_detection_twist_cov(
+void TrackedObjectConverter::radar_cov_to_detection_twist_cov(
   const std::array<float, 6> & radar_twist_cov, const float yaw, const float yaw_rate_std,
   std::array<double, 36> & twist_cov) const
 {
@@ -264,12 +187,12 @@ void RadarObjectsAdapter::radar_cov_to_detection_twist_cov(
 
   twist_cov[DETECTION_COV_IDX::Y_Z] = 0.0;
 
-  if (orientation_rate_std_available_) {
+  if (availability_.orientation_rate_std) {
     twist_cov[DETECTION_COV_IDX::YAW_YAW] = static_cast<double>(yaw_rate_std * yaw_rate_std);
   }
 }
 
-void RadarObjectsAdapter::radar_cov_to_detection_acceleration_cov(
+void TrackedObjectConverter::radar_cov_to_detection_acceleration_cov(
   const std::array<float, 6> & radar_acceleration_cov, const float yaw,
   std::array<double, 36> & acceleration_cov) const
 {
@@ -296,30 +219,28 @@ void RadarObjectsAdapter::radar_cov_to_detection_acceleration_cov(
   acceleration_cov[DETECTION_COV_IDX::Y_Z] = 0.0;
 }
 
-template <typename ObjectType>
-void RadarObjectsAdapter::populate_common_fields(
-  const autoware_sensing_msgs::msg::RadarObject & input_object, ObjectType & output_object,
-  const float yaw) const
+autoware_perception_msgs::msg::TrackedObject TrackedObjectConverter::operator()(
+  const autoware_sensing_msgs::msg::RadarObject & input_object) const
 {
-  auto default_size_x = params_.default_size_x;
-  auto default_size_y = params_.default_size_y;
-  auto default_size_z = params_.default_size_z;
-  auto default_position_z = params_.default_position_z;
-  auto default_velocity_z = params_.default_velocity_z;
-  auto default_acceleration_z = params_.default_acceleration_z;
+  autoware_perception_msgs::msg::TrackedObject output_object;
+
+  output_object.object_id.set__uuid(generate_uuid_(input_object.object_id));
 
   output_object.existence_probability = input_object.existence_probability;
 
   auto & output_shape = output_object.shape;
   output_shape.type = autoware_perception_msgs::msg::Shape::BOUNDING_BOX;
-  output_shape.dimensions.x = size_x_available_ ? input_object.size.x : default_size_x;
-  output_shape.dimensions.y = size_y_available_ ? input_object.size.y : default_size_y;
-  output_shape.dimensions.z = size_z_available_ ? input_object.size.z : default_size_z;
+  output_shape.dimensions.x = availability_.size_x ? input_object.size.x : params_.default_size_x;
+  output_shape.dimensions.y = availability_.size_y ? input_object.size.y : params_.default_size_y;
+  output_shape.dimensions.z = availability_.size_z ? input_object.size.z : params_.default_size_z;
+
+  const float yaw = input_object.orientation;
 
   auto & output_pose = output_object.kinematics.pose_with_covariance.pose;
   output_pose.position.x = input_object.position.x;
   output_pose.position.y = input_object.position.y;
-  output_pose.position.z = position_z_available_ ? input_object.position.z : default_position_z;
+  output_pose.position.z =
+    availability_.position_z ? input_object.position.z : params_.default_position_z;
   output_pose.orientation = autoware_utils_geometry::create_quaternion_from_yaw(yaw);
 
   radar_cov_to_detection_pose_cov(
@@ -331,91 +252,129 @@ void RadarObjectsAdapter::populate_common_fields(
     std::cos(yaw) * input_object.velocity.x + std::sin(yaw) * input_object.velocity.y;
   output_twist.linear.y =
     -std::sin(yaw) * input_object.velocity.x + std::cos(yaw) * input_object.velocity.y;
-  output_twist.linear.z = velocity_z_available_ ? input_object.velocity.z : default_velocity_z;
+  output_twist.linear.z =
+    availability_.velocity_z ? input_object.velocity.z : params_.default_velocity_z;
   output_twist.angular.z = input_object.orientation_rate;
 
   radar_cov_to_detection_twist_cov(
     input_object.velocity_covariance, yaw, input_object.orientation_rate_std,
     output_object.kinematics.twist_with_covariance.covariance);
 
-  // Additional fields for TrackedObject
-  if constexpr (std::is_same_v<ObjectType, autoware_perception_msgs::msg::TrackedObject>) {
-    auto & output_acceleration = output_object.kinematics.acceleration_with_covariance.accel;
-    output_acceleration.linear.x =
-      std::cos(yaw) * input_object.acceleration.x + std::sin(yaw) * input_object.acceleration.y;
-    output_acceleration.linear.y =
-      -std::sin(yaw) * input_object.acceleration.x + std::cos(yaw) * input_object.acceleration.y;
-    output_acceleration.linear.z =
-      acceleration_z_available_ ? input_object.acceleration.z : default_acceleration_z;
+  auto & output_acceleration = output_object.kinematics.acceleration_with_covariance.accel;
+  output_acceleration.linear.x =
+    std::cos(yaw) * input_object.acceleration.x + std::sin(yaw) * input_object.acceleration.y;
+  output_acceleration.linear.y =
+    -std::sin(yaw) * input_object.acceleration.x + std::cos(yaw) * input_object.acceleration.y;
+  output_acceleration.linear.z =
+    availability_.acceleration_z ? input_object.acceleration.z : params_.default_acceleration_z;
 
-    radar_cov_to_detection_acceleration_cov(
-      input_object.acceleration_covariance, yaw,
-      output_object.kinematics.acceleration_with_covariance.covariance);
-  }
+  radar_cov_to_detection_acceleration_cov(
+    input_object.acceleration_covariance, yaw,
+    output_object.kinematics.acceleration_with_covariance.covariance);
+
+  // Set flags for kinematics
+  output_object.kinematics.orientation_availability =
+    autoware_perception_msgs::msg::TrackedObjectKinematics::AVAILABLE;
+  output_object.kinematics.is_stationary =
+    input_object.movement_status !=
+    autoware_sensing_msgs::msg::RadarObject::MOVEMENT_STATUS_DYNAMIC;
+
+  return output_object;
 }
 
-autoware_perception_msgs::msg::DetectedObjects RadarObjectsAdapter::to_detected_objects(
-  const autoware_sensing_msgs::msg::RadarObjects & input_msg) const
+RadarObjectsAdapter::RadarObjectsAdapter(
+  const RadarObjectsAdapterParams & params, const ClassificationRemap & classification_remap,
+  const std::string & topic_name)
+: params_(params),
+  generate_uuid_(ObjectUUIDGenerator(topic_name)),
+  classification_remapper_(perception_friendly_classification_remap(), classification_remap)
 {
-  autoware_perception_msgs::msg::DetectedObjects output_msg;
-
-  output_msg.header = input_msg.header;
-  output_msg.objects.reserve(input_msg.objects.size());
-
-  for (const auto & input_object : input_msg.objects) {
-    autoware_perception_msgs::msg::DetectedObject output_object;
-
-    // Populate common fields
-    const auto & yaw = input_object.orientation;
-    populate_common_fields(input_object, output_object, yaw);
-
-    // Set flags for kinematics
-    output_object.kinematics.has_position_covariance = true;
-    output_object.kinematics.orientation_availability =
-      autoware_perception_msgs::msg::DetectedObjectKinematics::AVAILABLE;
-    output_object.kinematics.has_twist = true;
-    output_object.kinematics.has_twist_covariance = true;
-
-    // Set classification
-    output_object.classification = classification_remapper_(input_object.classifications);
-
-    output_msg.objects.push_back(output_object);
-  }
-
-  return output_msg;
+  required_attributes_ = {
+    "existence_probability", "position_x",     "position_y", "velocity_x", "velocity_y",
+    "acceleration_x",        "acceleration_y", "orientation"};
 }
 
-autoware_perception_msgs::msg::TrackedObjects RadarObjectsAdapter::to_tracked_objects(
-  const autoware_sensing_msgs::msg::RadarObjects & input_msg) const
+RadarObjectsAdapter::RadarInfoResult RadarObjectsAdapter::update_radar_info(
+  const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg)
 {
-  autoware_perception_msgs::msg::TrackedObjects output_msg;
-
-  output_msg.header = input_msg.header;
-  output_msg.objects.reserve(input_msg.objects.size());
-
-  for (const auto & input_object : input_msg.objects) {
-    autoware_perception_msgs::msg::TrackedObject output_object;
-
-    output_object.object_id.set__uuid(generate_uuid_(input_object.object_id));
-
-    // Populate common fields
-    const auto & yaw = input_object.orientation;
-    populate_common_fields(input_object, output_object, yaw);
-
-    // Set flags for kinematics
-    output_object.kinematics.orientation_availability =
-      autoware_perception_msgs::msg::TrackedObjectKinematics::AVAILABLE;
-    output_object.kinematics.is_stationary =
-      input_object.movement_status !=
-      autoware_sensing_msgs::msg::RadarObject::MOVEMENT_STATUS_DYNAMIC;
-
-    // Populate classification
-    output_object.classification = classification_remapper_(input_object.classifications);
-
-    output_msg.objects.push_back(output_object);
+  for (const auto & field_info : radar_info_msg.object_fields_info) {
+    field_info_map_[field_info.field_name.data] = field_info;
   }
 
-  return output_msg;
+  RadarInfoResult result;
+  for (const auto & attribute : required_attributes_) {
+    if (field_info_map_.find(attribute) == field_info_map_.end()) {
+      result.missing_required_fields.push_back(attribute);
+    }
+  }
+  if (!result.valid()) {
+    tracked_object_converter_.reset();
+    return result;
+  }
+
+  RadarFieldAvailability availability;
+  availability.position_z = field_info_map_.count("position_z") > 0;
+  availability.velocity_z = field_info_map_.count("velocity_z") > 0;
+  availability.acceleration_z = field_info_map_.count("acceleration_z") > 0;
+  availability.size_x = field_info_map_.count("size_x") > 0;
+  availability.size_y = field_info_map_.count("size_y") > 0;
+  availability.size_z = field_info_map_.count("size_z") > 0;
+
+  availability.orientation_std = field_info_map_.count("orientation_std") > 0;
+  availability.orientation_rate_std = field_info_map_.count("orientation_rate_std") > 0;
+
+  tracked_object_converter_.emplace(params_, availability, generate_uuid_);
+
+  // The fields filled from a parameter, in the order the node has always warned about them.
+  // orientation_std and orientation_rate_std have no parameter: without them the yaw variances
+  // stay zero, and that has never been warned about.
+  if (!availability.position_z) {
+    result.defaulted_fields.emplace_back("position_z", params_.default_position_z);
+  }
+  if (!availability.velocity_z) {
+    result.defaulted_fields.emplace_back("velocity_z", params_.default_velocity_z);
+  }
+  if (!availability.acceleration_z) {
+    result.defaulted_fields.emplace_back("acceleration_z", params_.default_acceleration_z);
+  }
+  if (!availability.size_x) {
+    result.defaulted_fields.emplace_back("size_x", params_.default_size_x);
+  }
+  if (!availability.size_y) {
+    result.defaulted_fields.emplace_back("size_y", params_.default_size_y);
+  }
+  if (!availability.size_z) {
+    result.defaulted_fields.emplace_back("size_z", params_.default_size_z);
+  }
+  return result;
+}
+
+RadarObjectsAdapter::Result RadarObjectsAdapter::convert(
+  const autoware_sensing_msgs::msg::RadarObjects & input_msg) const
+{
+  if (!tracked_object_converter_.has_value()) {
+    return {Outcome::NoValidRadarInfo, {}, {}};
+  }
+
+  autoware_perception_msgs::msg::TrackedObjects tracks;
+  tracks.header = input_msg.header;
+  tracks.objects.reserve(input_msg.objects.size());
+
+  autoware_perception_msgs::msg::DetectedObjects detections;
+  detections.header = input_msg.header;
+  detections.objects.reserve(input_msg.objects.size());
+
+  // A track is a detection plus its identity, its acceleration and whether it stands still, so
+  // the track is built first and the detection is what is left of it.
+  for (const auto & input_object : input_msg.objects) {
+    autoware_perception_msgs::msg::TrackedObject track = (*tracked_object_converter_)(input_object);
+    track.classification = classification_remapper_(input_object.classifications);
+
+    detections.objects.push_back(autoware::object_recognition_utils::toDetectedObject(track));
+    tracks.objects.push_back(std::move(track));
+  }
+
+  return {Outcome::Converted, std::move(detections), std::move(tracks)};
 }
 
 }  // namespace autoware::radar_objects_adapter
