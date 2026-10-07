@@ -21,6 +21,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -322,18 +323,24 @@ RadarObjectsAdapter::RadarObjectsAdapter(
 tl::expected<ConversionConfiguration, InvalidRadarInfo> RadarObjectsAdapter::update_radar_info(
   const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg)
 {
+  // The answer is fixed by the first valid radar info: a later message is not looked at, and
+  // comes back with the configuration already fixed.
+  if (tracked_object_converter_.has_value()) {
+    return tracked_object_converter_->configuration();
+  }
+
+  std::set<std::string> declared_fields;
   for (const auto & field_info : radar_info_msg.object_fields_info) {
-    field_info_map_[field_info.field_name.data] = field_info;
+    declared_fields.insert(field_info.field_name.data);
   }
 
   std::vector<std::string> missing_required_fields;
   for (const auto & attribute : required_attributes_) {
-    if (field_info_map_.find(attribute) == field_info_map_.end()) {
+    if (declared_fields.count(attribute) == 0) {
       missing_required_fields.push_back(attribute);
     }
   }
   if (!missing_required_fields.empty()) {
-    tracked_object_converter_.reset();
     return tl::make_unexpected(InvalidRadarInfo(missing_required_fields));
   }
 
@@ -341,7 +348,9 @@ tl::expected<ConversionConfiguration, InvalidRadarInfo> RadarObjectsAdapter::upd
   // their place. orientation_std and orientation_rate_std have no parameter: without them the
   // yaw variances stay zero, and that has never been warned about.
   ConversionConfiguration config = config_;
-  const auto provided = [this](const char * field) { return field_info_map_.count(field) > 0; };
+  const auto provided = [&declared_fields](const char * field) {
+    return declared_fields.count(field) > 0;
+  };
   if (provided("position_z")) {
     config.default_position_z.reset();
   }
