@@ -21,10 +21,12 @@
 #include <autoware_sensing_msgs/msg/radar_classification.hpp>
 #include <autoware_sensing_msgs/msg/radar_info.hpp>
 #include <autoware_sensing_msgs/msg/radar_objects.hpp>
+#include <unique_identifier_msgs/msg/uuid.hpp>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -50,6 +52,20 @@ using ClassificationRemap =
 ClassificationRemap make_classification_remap_from_string_pair(
   const std::map<std::string, std::string> & classification_remap_str,
   std::map<std::string, std::string> & unknown_perception_labels);
+
+// Makes a tracked object's UUID out of the radar's 32-bit object id: the id, least significant
+// byte first, then the hash of the input topic name, least significant byte first, then zeros.
+// The hash tells the tracks of one radar from those of another when they are merged downstream.
+class ObjectUUIDGenerator
+{
+public:
+  explicit ObjectUUIDGenerator(const std::string & topic_name);
+
+  unique_identifier_msgs::msg::UUID::_uuid_type operator()(std::uint32_t object_id) const;
+
+private:
+  std::array<std::uint8_t, sizeof(std::size_t)> topic_hash_code_;
+};
 
 // The values used for the object fields a radar does not provide.
 struct RadarObjectsAdapterParams
@@ -151,6 +167,9 @@ private:
   std::unordered_map<std::string, autoware_sensing_msgs::msg::RadarFieldInfo> field_info_map_;
 
   bool valid_radar_info_{false};
+  // How a tracked object's id is made from the radar's; a function, so that it can be replaced.
+  std::function<unique_identifier_msgs::msg::UUID::_uuid_type(std::uint32_t object_id)>
+    generate_uuid_;
 
   std::vector<std::string> required_attributes_;
 
@@ -165,8 +184,6 @@ private:
   bool orientation_rate_std_available_{false};
 
   std::map<std::uint8_t, std::uint8_t> classification_remap_;
-
-  std::array<std::uint8_t, sizeof(std::size_t)> topic_hash_code_;
 };
 
 }  // namespace autoware::radar_objects_adapter
