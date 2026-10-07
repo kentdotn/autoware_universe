@@ -115,12 +115,12 @@ private:
 // The values used for the object fields a radar does not provide.
 struct RadarObjectsAdapterParams
 {
-  float default_position_z{0.0f};
-  float default_velocity_z{0.0f};
-  float default_acceleration_z{0.0f};
-  float default_size_x{0.0f};
-  float default_size_y{0.0f};
-  float default_size_z{0.0f};
+  double default_position_z{0.0};
+  double default_velocity_z{0.0};
+  double default_acceleration_z{0.0};
+  double default_size_x{0.0};
+  double default_size_y{0.0};
+  double default_size_z{0.0};
 };
 
 // Which optional object fields the radar provides, as its radar info declared them. A field that
@@ -204,7 +204,7 @@ public:
     std::vector<std::string> missing_required_fields;
     // The optional fields the radar does not provide, each with the parameter value used in its
     // place. Empty while the radar info is not valid: nothing is decided from an incomplete one.
-    std::vector<std::pair<std::string, float>> defaulted_fields;
+    std::vector<std::pair<std::string, double>> defaulted_fields;
 
     bool valid() const { return missing_required_fields.empty(); }
   };

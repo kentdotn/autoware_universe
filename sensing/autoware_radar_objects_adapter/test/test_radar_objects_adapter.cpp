@@ -71,12 +71,12 @@ constexpr double tolerance = 1e-6;
 RadarObjectsAdapterParams make_params()
 {
   RadarObjectsAdapterParams params;
-  params.default_position_z = 0.25f;
-  params.default_velocity_z = 0.5f;
-  params.default_acceleration_z = 0.75f;
-  params.default_size_x = 5.0f;
-  params.default_size_y = 2.0f;
-  params.default_size_z = 1.5f;
+  params.default_position_z = 0.25;
+  params.default_velocity_z = 0.5;
+  params.default_acceleration_z = 0.75;
+  params.default_size_x = 5.0;
+  params.default_size_y = 2.0;
+  params.default_size_z = 1.5;
   return params;
 }
 
@@ -143,10 +143,10 @@ std::vector<std::string> without(std::vector<std::string> fields, const std::str
 // The six optional fields that have a parameter, with the value make_params() gives each, in the
 // order update_radar_info() reports them. orientation_std and orientation_rate_std have no
 // parameter and are never reported.
-using DefaultedField = std::pair<std::string, float>;
-const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25f},     {"velocity_z", 0.5f},
-                                                   {"acceleration_z", 0.75f}, {"size_x", 5.0f},
-                                                   {"size_y", 2.0f},          {"size_z", 1.5f}};
+using DefaultedField = std::pair<std::string, double>;
+const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25},     {"velocity_z", 0.5},
+                                                   {"acceleration_z", 0.75}, {"size_x", 5.0},
+                                                   {"size_y", 2.0},          {"size_z", 1.5}};
 
 std::vector<DefaultedField> all_defaulted_except(const std::string & declared)
 {

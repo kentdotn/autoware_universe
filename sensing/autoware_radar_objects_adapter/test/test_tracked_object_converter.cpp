@@ -49,12 +49,12 @@ constexpr std::size_t cov_yaw_yaw = 35;
 RadarObjectsAdapterParams make_params()
 {
   RadarObjectsAdapterParams params;
-  params.default_position_z = 0.25f;
-  params.default_velocity_z = 0.5f;
-  params.default_acceleration_z = 0.75f;
-  params.default_size_x = 5.0f;
-  params.default_size_y = 2.0f;
-  params.default_size_z = 1.5f;
+  params.default_position_z = 0.25;
+  params.default_velocity_z = 0.5;
+  params.default_acceleration_z = 0.75;
+  params.default_size_x = 5.0;
+  params.default_size_y = 2.0;
+  params.default_size_z = 1.5;
   return params;
 }
 
