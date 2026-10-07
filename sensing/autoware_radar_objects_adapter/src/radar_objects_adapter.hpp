@@ -154,18 +154,6 @@ public:
     const autoware_sensing_msgs::msg::RadarObject & input_object) const;
 
 private:
-  void radar_cov_to_detection_pose_cov(
-    const std::array<float, 6> & radar_pose_cov, const double orientation_std,
-    std::array<double, 36> & pose_cov) const;
-
-  void radar_cov_to_detection_twist_cov(
-    const std::array<float, 6> & radar_twist_cov, const float yaw, const float yaw_rate_std,
-    std::array<double, 36> & twist_cov) const;
-
-  void radar_cov_to_detection_acceleration_cov(
-    const std::array<float, 6> & radar_acceleration_cov, const float yaw,
-    std::array<double, 36> & acceleration_cov) const;
-
   RadarObjectsAdapterParams params_;
   RadarFieldAvailability availability_;
   GenerateObjectUUID generate_uuid_;

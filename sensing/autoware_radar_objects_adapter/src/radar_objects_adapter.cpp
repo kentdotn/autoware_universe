@@ -104,6 +104,66 @@ float mask_cov_value(double value)
     value == autoware_sensing_msgs::msg::RadarObject::INVALID_COV_VALUE ? 0.0 : value);
 }
 
+using DETECTION_COV_IDX = autoware_utils_geometry::xyzrpy_covariance_index::XYZRPY_COV_IDX;
+using RADAR_COV_IDX = autoware_utils_geometry::xyz_upper_covariance_index::XYZ_UPPER_COV_IDX;
+
+// The variance a standard deviation the radar may or may not provide contributes to a
+// covariance: its square when the field is available, nothing otherwise.
+std::optional<double> variance_if_available(const bool available, const float std_dev)
+{
+  if (!available) {
+    return std::nullopt;
+  }
+  return static_cast<double>(std_dev * std_dev);
+}
+
+// A 6x6 pose covariance whose x/y block is copied from the radar's upper triangle as it is,
+// with the yaw variance if there is one. Every other entry is zero.
+std::array<double, 36> copied_xy_covariance(
+  const std::array<float, 6> & radar_cov, const std::optional<double> & yaw_variance)
+{
+  std::array<double, 36> cov{};
+
+  cov[DETECTION_COV_IDX::X_X] = mask_cov_value(radar_cov[RADAR_COV_IDX::X_X]);
+  cov[DETECTION_COV_IDX::X_Y] = mask_cov_value(radar_cov[RADAR_COV_IDX::X_Y]);
+  cov[DETECTION_COV_IDX::Y_X] = mask_cov_value(radar_cov[RADAR_COV_IDX::X_Y]);
+  cov[DETECTION_COV_IDX::Y_Y] = mask_cov_value(radar_cov[RADAR_COV_IDX::Y_Y]);
+
+  if (yaw_variance.has_value()) {
+    cov[DETECTION_COV_IDX::YAW_YAW] = yaw_variance.value();
+  }
+  return cov;
+}
+
+// A 6x6 covariance whose x/y block is the radar's, rotated into the frame of an object facing
+// `yaw`, with the yaw variance if there is one. Every other entry is zero. Serves the twist and
+// the acceleration alike.
+std::array<double, 36> rotated_xy_covariance(
+  const std::array<float, 6> & radar_cov, const float yaw,
+  const std::optional<double> & yaw_variance)
+{
+  std::array<double, 36> cov{};
+
+  const float c = std::cos(yaw);
+  const float s = std::sin(yaw);
+
+  const float xx = mask_cov_value(radar_cov[RADAR_COV_IDX::X_X]);
+  const float xy = mask_cov_value(radar_cov[RADAR_COV_IDX::X_Y]);
+  const float yy = mask_cov_value(radar_cov[RADAR_COV_IDX::Y_Y]);
+
+  cov[DETECTION_COV_IDX::X_X] = static_cast<double>(xx * c * c + yy * s * s + 2.f * xy * s * c);
+
+  cov[DETECTION_COV_IDX::X_Y] = static_cast<double>((yy - xx) * s * c + xy * (c * c - s * s));
+  cov[DETECTION_COV_IDX::Y_X] = cov[DETECTION_COV_IDX::X_Y];
+
+  cov[DETECTION_COV_IDX::Y_Y] = static_cast<double>(xx * s * s + yy * c * c - 2.f * xy * s * c);
+
+  if (yaw_variance.has_value()) {
+    cov[DETECTION_COV_IDX::YAW_YAW] = yaw_variance.value();
+  }
+  return cov;
+}
+
 }  // namespace
 
 ClassificationRemap perception_friendly_classification_remap()
@@ -146,80 +206,6 @@ TrackedObjectConverter::TrackedObjectConverter(
 {
 }
 
-void TrackedObjectConverter::radar_cov_to_detection_pose_cov(
-  const std::array<float, 6> & radar_pose_cov, const double orientation_std,
-  std::array<double, 36> & pose_cov) const
-{
-  using DETECTION_COV_IDX = autoware_utils_geometry::xyzrpy_covariance_index::XYZRPY_COV_IDX;
-  using RADAR_COV_IDX = autoware_utils_geometry::xyz_upper_covariance_index::XYZ_UPPER_COV_IDX;
-
-  pose_cov[DETECTION_COV_IDX::X_X] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::X_X]);
-  pose_cov[DETECTION_COV_IDX::X_Y] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::X_Y]);
-  pose_cov[DETECTION_COV_IDX::Y_X] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::X_Y]);
-  pose_cov[DETECTION_COV_IDX::Y_Y] = mask_cov_value(radar_pose_cov[RADAR_COV_IDX::Y_Y]);
-
-  if (availability_.orientation_std) {
-    pose_cov[DETECTION_COV_IDX::YAW_YAW] = static_cast<double>(orientation_std * orientation_std);
-  }
-}
-
-void TrackedObjectConverter::radar_cov_to_detection_twist_cov(
-  const std::array<float, 6> & radar_twist_cov, const float yaw, const float yaw_rate_std,
-  std::array<double, 36> & twist_cov) const
-{
-  using DETECTION_COV_IDX = autoware_utils_geometry::xyzrpy_covariance_index::XYZRPY_COV_IDX;
-  using RADAR_COV_IDX = autoware_utils_geometry::xyz_upper_covariance_index::XYZ_UPPER_COV_IDX;
-
-  const float c = std::cos(yaw);
-  const float s = std::sin(yaw);
-
-  const float xx = mask_cov_value(radar_twist_cov[RADAR_COV_IDX::X_X]);
-  const float xy = mask_cov_value(radar_twist_cov[RADAR_COV_IDX::X_Y]);
-  const float yy = mask_cov_value(radar_twist_cov[RADAR_COV_IDX::Y_Y]);
-
-  twist_cov[DETECTION_COV_IDX::X_X] =
-    static_cast<double>(xx * c * c + yy * s * s + 2.f * xy * s * c);
-
-  twist_cov[DETECTION_COV_IDX::X_Y] = static_cast<double>((yy - xx) * s * c + xy * (c * c - s * s));
-  twist_cov[DETECTION_COV_IDX::Y_X] = twist_cov[DETECTION_COV_IDX::X_Y];
-
-  twist_cov[DETECTION_COV_IDX::Y_Y] =
-    static_cast<double>(xx * s * s + yy * c * c - 2.f * xy * s * c);
-
-  twist_cov[DETECTION_COV_IDX::Y_Z] = 0.0;
-
-  if (availability_.orientation_rate_std) {
-    twist_cov[DETECTION_COV_IDX::YAW_YAW] = static_cast<double>(yaw_rate_std * yaw_rate_std);
-  }
-}
-
-void TrackedObjectConverter::radar_cov_to_detection_acceleration_cov(
-  const std::array<float, 6> & radar_acceleration_cov, const float yaw,
-  std::array<double, 36> & acceleration_cov) const
-{
-  using DETECTION_COV_IDX = autoware_utils_geometry::xyzrpy_covariance_index::XYZRPY_COV_IDX;
-  using RADAR_COV_IDX = autoware_utils_geometry::xyz_upper_covariance_index::XYZ_UPPER_COV_IDX;
-
-  const float c = std::cos(yaw);
-  const float s = std::sin(yaw);
-
-  const float xx = mask_cov_value(radar_acceleration_cov[RADAR_COV_IDX::X_X]);
-  const float xy = mask_cov_value(radar_acceleration_cov[RADAR_COV_IDX::X_Y]);
-  const float yy = mask_cov_value(radar_acceleration_cov[RADAR_COV_IDX::Y_Y]);
-
-  acceleration_cov[DETECTION_COV_IDX::X_X] =
-    static_cast<double>(xx * c * c + yy * s * s + 2.f * xy * s * c);
-
-  acceleration_cov[DETECTION_COV_IDX::X_Y] =
-    static_cast<double>((yy - xx) * s * c + xy * (c * c - s * s));
-  acceleration_cov[DETECTION_COV_IDX::Y_X] = acceleration_cov[DETECTION_COV_IDX::X_Y];
-
-  acceleration_cov[DETECTION_COV_IDX::Y_Y] =
-    static_cast<double>(xx * s * s + yy * c * c - 2.f * xy * s * c);
-
-  acceleration_cov[DETECTION_COV_IDX::Y_Z] = 0.0;
-}
-
 autoware_perception_msgs::msg::TrackedObject TrackedObjectConverter::operator()(
   const autoware_sensing_msgs::msg::RadarObject & input_object) const
 {
@@ -244,9 +230,9 @@ autoware_perception_msgs::msg::TrackedObject TrackedObjectConverter::operator()(
     availability_.position_z ? input_object.position.z : params_.default_position_z;
   output_pose.orientation = autoware_utils_geometry::create_quaternion_from_yaw(yaw);
 
-  radar_cov_to_detection_pose_cov(
-    input_object.position_covariance, input_object.orientation_std,
-    output_object.kinematics.pose_with_covariance.covariance);
+  output_object.kinematics.pose_with_covariance.covariance = copied_xy_covariance(
+    input_object.position_covariance,
+    variance_if_available(availability_.orientation_std, input_object.orientation_std));
 
   auto & output_twist = output_object.kinematics.twist_with_covariance.twist;
   output_twist.linear.x =
@@ -257,9 +243,9 @@ autoware_perception_msgs::msg::TrackedObject TrackedObjectConverter::operator()(
     availability_.velocity_z ? input_object.velocity.z : params_.default_velocity_z;
   output_twist.angular.z = input_object.orientation_rate;
 
-  radar_cov_to_detection_twist_cov(
-    input_object.velocity_covariance, yaw, input_object.orientation_rate_std,
-    output_object.kinematics.twist_with_covariance.covariance);
+  output_object.kinematics.twist_with_covariance.covariance = rotated_xy_covariance(
+    input_object.velocity_covariance, yaw,
+    variance_if_available(availability_.orientation_rate_std, input_object.orientation_rate_std));
 
   auto & output_acceleration = output_object.kinematics.acceleration_with_covariance.accel;
   output_acceleration.linear.x =
@@ -269,9 +255,8 @@ autoware_perception_msgs::msg::TrackedObject TrackedObjectConverter::operator()(
   output_acceleration.linear.z =
     availability_.acceleration_z ? input_object.acceleration.z : params_.default_acceleration_z;
 
-  radar_cov_to_detection_acceleration_cov(
-    input_object.acceleration_covariance, yaw,
-    output_object.kinematics.acceleration_with_covariance.covariance);
+  output_object.kinematics.acceleration_with_covariance.covariance =
+    rotated_xy_covariance(input_object.acceleration_covariance, yaw, std::nullopt);
 
   // Set flags for kinematics
   output_object.kinematics.orientation_availability =
