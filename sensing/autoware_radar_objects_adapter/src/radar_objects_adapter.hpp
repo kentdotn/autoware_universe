@@ -37,7 +37,6 @@
 #include <map>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -164,7 +163,9 @@ private:
 // ---------------------------------------------------------------------------------------------
 
 // Converts radar objects into detected objects and into tracked objects. Learns which fields the
-// radar provides from its radar info messages; until a valid one has arrived, nothing is converted.
+// radar provides from its radar info messages: the first message that declares every required
+// field fixes the answer, and later messages are ignored; until then, each message is judged on
+// its own and nothing is converted.
 class RadarObjectsAdapter
 {
 public:
@@ -187,12 +188,15 @@ public:
   // is where the field -> parameter pairing lives.
   struct RadarInfoResult
   {
-    // The required fields that no radar info has declared so far, in the order they are
-    // required. Empty when the radar info is valid.
+    // The required fields the message does not declare, in the order they are required. Empty
+    // when the message is valid, and once the answer is fixed.
     std::vector<std::string> missing_required_fields;
     // The optional fields the radar does not provide, each with the parameter value used in its
-    // place. Empty while the radar info is not valid: nothing is decided from an incomplete one.
+    // place. Empty while the radar info is not valid (nothing is decided from an incomplete one)
+    // and for an ignored message (nothing new was decided).
     std::vector<std::pair<std::string, double>> defaulted_fields;
+    // True when the answer was fixed by an earlier message and this one was not looked at.
+    bool ignored{false};
 
     bool valid() const { return missing_required_fields.empty(); }
   };
@@ -210,10 +214,10 @@ private:
   GenerateObjectUUID generate_uuid_;
   ClassificationRemapper classification_remapper_;
 
-  std::unordered_map<std::string, autoware_sensing_msgs::msg::RadarFieldInfo> field_info_map_;
   std::vector<std::string> required_attributes_;
 
-  // Set once a radar info has declared every required field; converts nothing before.
+  // Set by the first radar info that declares every required field, and kept; converts nothing
+  // before.
   std::optional<TrackedObjectConverter> tracked_object_converter_;
 };
 

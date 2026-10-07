@@ -141,6 +141,9 @@ void RadarObjectsAdapterNode::radar_info_callback(
   const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg)
 {
   const auto result = adapter_->update_radar_info(radar_info_msg);
+  if (result.ignored) {
+    return;
+  }
 
   if (!result.valid()) {
     RCLCPP_ERROR_ONCE(

@@ -20,6 +20,8 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -283,31 +285,36 @@ RadarObjectsAdapter::RadarObjectsAdapter(
 RadarObjectsAdapter::RadarInfoResult RadarObjectsAdapter::update_radar_info(
   const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg)
 {
-  for (const auto & field_info : radar_info_msg.object_fields_info) {
-    field_info_map_[field_info.field_name.data] = field_info;
+  RadarInfoResult result;
+  if (tracked_object_converter_.has_value()) {
+    result.ignored = true;
+    return result;
   }
 
-  RadarInfoResult result;
+  std::set<std::string> declared_fields;
+  for (const auto & field_info : radar_info_msg.object_fields_info) {
+    declared_fields.insert(field_info.field_name.data);
+  }
+
   for (const auto & attribute : required_attributes_) {
-    if (field_info_map_.find(attribute) == field_info_map_.end()) {
+    if (declared_fields.count(attribute) == 0) {
       result.missing_required_fields.push_back(attribute);
     }
   }
   if (!result.valid()) {
-    tracked_object_converter_.reset();
     return result;
   }
 
   RadarFieldAvailability availability;
-  availability.position_z = field_info_map_.count("position_z") > 0;
-  availability.velocity_z = field_info_map_.count("velocity_z") > 0;
-  availability.acceleration_z = field_info_map_.count("acceleration_z") > 0;
-  availability.size_x = field_info_map_.count("size_x") > 0;
-  availability.size_y = field_info_map_.count("size_y") > 0;
-  availability.size_z = field_info_map_.count("size_z") > 0;
+  availability.position_z = declared_fields.count("position_z") > 0;
+  availability.velocity_z = declared_fields.count("velocity_z") > 0;
+  availability.acceleration_z = declared_fields.count("acceleration_z") > 0;
+  availability.size_x = declared_fields.count("size_x") > 0;
+  availability.size_y = declared_fields.count("size_y") > 0;
+  availability.size_z = declared_fields.count("size_z") > 0;
 
-  availability.orientation_std = field_info_map_.count("orientation_std") > 0;
-  availability.orientation_rate_std = field_info_map_.count("orientation_rate_std") > 0;
+  availability.orientation_std = declared_fields.count("orientation_std") > 0;
+  availability.orientation_rate_std = declared_fields.count("orientation_rate_std") > 0;
 
   tracked_object_converter_.emplace(params_, availability, generate_uuid_);
 

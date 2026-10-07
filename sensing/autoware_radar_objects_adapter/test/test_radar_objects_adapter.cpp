@@ -416,9 +416,56 @@ TEST(RadarObjectsAdapter, RadarInfo_UnknownFields_Ignored)
   EXPECT_EQ(result.missing_required_fields, std::vector<std::string>{"orientation"});
 }
 
-// Deliberately not pinned here: what a second radar info does to the fields declared by the first
-// (today they accumulate). The maintainers have answered that the first valid radar info should
-// fix them; the change and its cases come with the refactoring.
+// Until a valid radar info arrives, each message is judged on its own: two messages that each
+// declare part of the required fields do not add up, and nothing is converted in between.
+TEST(RadarObjectsAdapter, RadarInfo_BeforeValid_EachMessageJudgedOnItsOwn)
+{
+  RadarObjectsAdapter adapter = make_fresh_adapter();
+
+  RadarInfoResult result =
+    adapter.update_radar_info(make_radar_info(without(required_fields, "orientation")));
+  EXPECT_FALSE(result.valid());
+  EXPECT_FALSE(result.ignored);
+
+  result = adapter.update_radar_info(make_radar_info({"orientation"}));
+  EXPECT_FALSE(result.valid());
+  EXPECT_FALSE(result.ignored);
+  EXPECT_EQ(result.missing_required_fields, without(required_fields, "orientation"));
+  EXPECT_EQ(
+    adapter.convert(make_radar_objects({make_radar_object()})).outcome, Outcome::NoValidRadarInfo);
+
+  result = adapter.update_radar_info(make_radar_info(required_fields));
+  EXPECT_TRUE(result.valid());
+  EXPECT_FALSE(result.ignored);
+  EXPECT_EQ(adapter.convert(make_radar_objects({make_radar_object()})).outcome, Outcome::Converted);
+}
+
+// The first valid radar info fixes the answer. A later message is reported as ignored, with
+// nothing missing and nothing newly defaulted, and changes nothing about the conversion, whether
+// it declares more fields, fewer, or lacks a required one.
+TEST(RadarObjectsAdapter, RadarInfo_AfterValid_LaterRadarInfoIgnored)
+{
+  RadarObjectsAdapter adapter = make_fresh_adapter();
+  const RadarObject radar = make_radar_object();
+  const RadarObjectsAdapterParams params = make_params();
+  ASSERT_TRUE(
+    adapter.update_radar_info(make_radar_info(with(required_fields, {"position_z"}))).valid());
+
+  for (const auto & later :
+       {with(required_fields, {"size_x"}), without(required_fields, "orientation"),
+        std::vector<std::string>{}}) {
+    const RadarInfoResult result = adapter.update_radar_info(make_radar_info(later));
+
+    EXPECT_TRUE(result.ignored);
+    EXPECT_TRUE(result.valid());
+    EXPECT_TRUE(result.missing_required_fields.empty());
+    EXPECT_TRUE(result.defaulted_fields.empty());
+    // Still the first radar info's answer: position_z copied, size_x from the parameter.
+    const auto [detected, tracked] = convert_one(adapter, radar);
+    EXPECT_DOUBLE_EQ(detected.kinematics.pose_with_covariance.pose.position.z, radar.position.z);
+    EXPECT_DOUBLE_EQ(detected.shape.dimensions.x, params.default_size_x);
+  }
+}
 
 // ---------------------------------------------------------------------------------------------
 // The gate: convert() answers with NoValidRadarInfo and no messages until a radar info has
