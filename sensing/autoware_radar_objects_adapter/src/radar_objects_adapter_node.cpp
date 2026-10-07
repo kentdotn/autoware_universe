@@ -63,6 +63,10 @@ RadarObjectsAdapterNode::RadarObjectsAdapterNode(const rclcpp::NodeOptions & opt
     declare_parameter<std::string>("classification_remap.CAR", "CAR");
   classification_remap_str["TRUCK"] =
     declare_parameter<std::string>("classification_remap.TRUCK", "TRUCK");
+  classification_remap_str["BUS"] =
+    declare_parameter<std::string>("classification_remap.BUS", "BUS");
+  classification_remap_str["TRAILER"] =
+    declare_parameter<std::string>("classification_remap.TRAILER", "TRAILER");
   classification_remap_str["MOTORCYCLE"] =
     declare_parameter<std::string>("classification_remap.MOTORCYCLE", "MOTORCYCLE");
   classification_remap_str["BICYCLE"] =
