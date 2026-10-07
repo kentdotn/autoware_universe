@@ -146,14 +146,15 @@ void RadarObjectsAdapterNode::radar_info_callback(
   }
 
   if (!result.valid()) {
+    std::string missing;
+    for (const auto & attribute : result.missing_required_fields) {
+      missing += (missing.empty() ? "" : ", ") + attribute;
+    }
     RCLCPP_ERROR_ONCE(
       get_logger(),
-      "Radar info message is not valid. Some required attributes are missing. This radar may not "
-      "be compatible with autoware");
-
-    for (const auto & attribute : result.missing_required_fields) {
-      RCLCPP_ERROR_ONCE(get_logger(), "\tMissing attribute: %s", attribute.c_str());
-    }
+      "Radar info message is not valid. Some required attributes are missing (%s). This radar "
+      "may not be compatible with autoware",
+      missing.c_str());
     return;
   }
 

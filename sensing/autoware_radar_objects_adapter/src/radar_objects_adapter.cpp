@@ -17,6 +17,7 @@
 #include <autoware/object_recognition_utils/conversion.hpp>
 #include <autoware_utils_geometry/geometry.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -70,8 +71,9 @@ ClassificationRemap make_classification_remap_from_string_pair(
 
 ObjectUUIDGenerator::ObjectUUIDGenerator(const std::string & topic_name)
 {
+  // Least significant byte first; a hash wider than 8 bytes is truncated.
   const std::size_t hash_code = std::hash<std::string>{}(topic_name);
-  for (std::size_t i = 0; i < sizeof(std::size_t); ++i) {
+  for (std::size_t i = 0; i < topic_hash_code_.size() && i < sizeof(hash_code); ++i) {
     topic_hash_code_[i] = static_cast<std::uint8_t>((hash_code >> (i * 8)) & 0xFF);
   }
 }
@@ -86,13 +88,8 @@ unique_identifier_msgs::msg::UUID::_uuid_type ObjectUUIDGenerator::operator()(
   uuid[2] = static_cast<uint8_t>((object_id >> 16) & 0xFF);
   uuid[3] = static_cast<uint8_t>((object_id >> 24) & 0xFF);
 
-  for (std::size_t i = 4; i < uuid.size(); ++i) {
-    if (i - 4 < topic_hash_code_.size()) {
-      uuid[i] = topic_hash_code_[i - 4];
-    } else {
-      uuid[i] = 0;
-    }
-  }
+  std::copy(topic_hash_code_.begin(), topic_hash_code_.end(), uuid.begin() + 4);
+  std::fill(uuid.begin() + 12, uuid.end(), 0);
 
   return uuid;
 }
