@@ -877,10 +877,11 @@ TEST(RadarObjectsAdapter, Classification_NoClassifications_EmptyList)
 
 namespace
 {
-// The eight radar labels the parameters can name, with their ids.
+// The ten radar labels the parameters can name, with their ids.
 const std::map<std::string, RadarClassification::_label_type> radar_labels = {
   {"UNKNOWN", RadarClassification::UNKNOWN}, {"CAR", RadarClassification::CAR},
-  {"TRUCK", RadarClassification::TRUCK},     {"MOTORCYCLE", RadarClassification::MOTORCYCLE},
+  {"TRUCK", RadarClassification::TRUCK},     {"BUS", RadarClassification::BUS},
+  {"TRAILER", RadarClassification::TRAILER}, {"MOTORCYCLE", RadarClassification::MOTORCYCLE},
   {"BICYCLE", RadarClassification::BICYCLE}, {"PEDESTRIAN", RadarClassification::PEDESTRIAN},
   {"ANIMAL", RadarClassification::ANIMAL},   {"HAZARD", RadarClassification::HAZARD}};
 
@@ -907,10 +908,10 @@ MadeRemap make_remap(const NameMap & names)
 }
 
 // The shipped parameter file, as the node reads it.
-const NameMap shipped_configuration = {{"UNKNOWN", "UNKNOWN"}, {"CAR", "CAR"},
-                                       {"TRUCK", "TRUCK"},     {"MOTORCYCLE", "CAR"},
-                                       {"BICYCLE", "CAR"},     {"PEDESTRIAN", "PEDESTRIAN"},
-                                       {"ANIMAL", "ANIMAL"},   {"HAZARD", "UNKNOWN"}};
+const NameMap shipped_configuration = {
+  {"UNKNOWN", "UNKNOWN"}, {"CAR", "CAR"},        {"TRUCK", "TRUCK"}, {"BUS", "CAR"},
+  {"TRAILER", "CAR"},     {"MOTORCYCLE", "CAR"}, {"BICYCLE", "CAR"}, {"PEDESTRIAN", "PEDESTRIAN"},
+  {"ANIMAL", "ANIMAL"},   {"HAZARD", "UNKNOWN"}};
 
 // An adapter with a valid radar info and the remap built from `names`.
 RadarObjectsAdapter make_adapter_with_remap(const NameMap & names)
@@ -946,18 +947,19 @@ TEST(RadarObjectsAdapter, RemapTable_KnownNames_MappedToIds)
   }
 }
 
-// The shipped configuration remaps MOTORCYCLE and BICYCLE to CAR, because the radar in use
-// tends to report a far car as a two-wheeler, and HAZARD to UNKNOWN. Applied by the adapter, the
-// remap works entry by entry: an object that carries a CAR, a MOTORCYCLE and a BICYCLE probability
-// comes out with three CAR entries, each with its own probability, while the labels the
-// configuration maps to themselves stay as they are.
-TEST(RadarObjectsAdapter, RemapTable_ShippedConfiguration_TwoWheelersBecomeCarHazardUnknown)
+// The shipped configuration remaps BUS, TRAILER, MOTORCYCLE and BICYCLE to CAR, because the
+// radar in use does not tell these from cars reliably, and HAZARD to UNKNOWN. Applied by the
+// adapter, the remap works entry by entry: an object that carries a CAR, a BUS, a MOTORCYCLE and
+// a BICYCLE probability comes out with four CAR entries, each with its own probability, while
+// the labels the configuration maps to themselves stay as they are.
+TEST(RadarObjectsAdapter, RemapTable_ShippedConfiguration_LargeVehiclesAndTwoWheelersBecomeCar)
 {
   const RadarObjectsAdapter adapter = make_adapter_with_remap(shipped_configuration);
   RadarObject radar = make_radar_object();
   radar.classifications = {
     make_classification(RadarClassification::CAR, 0.5f),
     make_classification(RadarClassification::TRUCK, 0.1f),
+    make_classification(RadarClassification::BUS, 0.4f),
     make_classification(RadarClassification::MOTORCYCLE, 0.8f),
     make_classification(RadarClassification::BICYCLE, 0.3f),
     make_classification(RadarClassification::PEDESTRIAN, 0.02f),
@@ -966,9 +968,10 @@ TEST(RadarObjectsAdapter, RemapTable_ShippedConfiguration_TwoWheelersBecomeCarHa
   const auto [detected, tracked] = convert_one(adapter, radar);
 
   const std::vector<LabeledProbability> expected = {
-    {ObjectClassification::CAR, 0.5f},         {ObjectClassification::TRUCK, 0.1f},
-    {ObjectClassification::CAR, 0.8f},         {ObjectClassification::CAR, 0.3f},
-    {ObjectClassification::PEDESTRIAN, 0.02f}, {ObjectClassification::UNKNOWN, 0.05f}};
+    {ObjectClassification::CAR, 0.5f},     {ObjectClassification::TRUCK, 0.1f},
+    {ObjectClassification::CAR, 0.4f},     {ObjectClassification::CAR, 0.8f},
+    {ObjectClassification::CAR, 0.3f},     {ObjectClassification::PEDESTRIAN, 0.02f},
+    {ObjectClassification::UNKNOWN, 0.05f}};
   EXPECT_EQ(labeled_probabilities(detected.classification), expected);
 }
 
@@ -997,12 +1000,12 @@ TEST(RadarObjectsAdapter, RemapTable_UnknownPerceptionName_MapsToUnknownAndRepor
   EXPECT_EQ(labeled_probabilities(detected.classification), applied);
 }
 
-// The radar labels the parameters can name are the eight above. Perception labels that the
-// radar side also defines (BUS, TRAILER, OVER_DRIVABLE, UNDER_DRIVABLE) are not among them, and
-// naming one as a key is an error rather than a silent entry: the parameter set is fixed.
+// The radar labels the parameters can name are the ten above. The two radar-only labels
+// (OVER_DRIVABLE, UNDER_DRIVABLE) are not among them, and naming one as a key is an error rather
+// than a silent entry: the parameter set is fixed.
 TEST(RadarObjectsAdapter, RemapTable_UnknownRadarName_Throws)
 {
-  for (const auto & name : {"BUS", "TRAILER", "OVER_DRIVABLE", "UNDER_DRIVABLE", "car", ""}) {
+  for (const auto & name : {"OVER_DRIVABLE", "UNDER_DRIVABLE", "car", ""}) {
     SCOPED_TRACE(name);
     EXPECT_THROW(make_remap({{name, "CAR"}}), std::out_of_range);
   }

@@ -14,6 +14,9 @@
       UNKNOWN: UNKNOWN
       CAR: CAR
       TRUCK: TRUCK
+      # the radar in use does not tell these from cars reliably
+      BUS: CAR
+      TRAILER: CAR
       # temporary remap: radar tends to misclassify far cars
       MOTORCYCLE: CAR
       BICYCLE: CAR
