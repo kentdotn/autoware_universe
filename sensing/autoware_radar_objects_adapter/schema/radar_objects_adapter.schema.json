@@ -57,6 +57,16 @@
               "description": "Radar class to map to TRUCK label.",
               "default": "TRUCK"
             },
+            "BUS": {
+              "type": "string",
+              "default": "CAR",
+              "description": "The radar in use does not tell BUS from CAR reliably; default=CAR"
+            },
+            "TRAILER": {
+              "type": "string",
+              "default": "CAR",
+              "description": "The radar in use does not tell TRAILER from CAR reliably; default=CAR"
+            },
             "MOTORCYCLE": {
               "type": "string",
               "default": "CAR",
@@ -87,6 +97,8 @@
             "UNKNOWN",
             "CAR",
             "TRUCK",
+            "BUS",
+            "TRAILER",
             "MOTORCYCLE",
             "BICYCLE",
             "PEDESTRIAN",
