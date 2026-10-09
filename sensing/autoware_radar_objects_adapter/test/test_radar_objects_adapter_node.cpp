@@ -378,6 +378,7 @@ TEST_F(RadarObjectsAdapterNodeTest, Construct_DefaultParameterMissing_Throws)
 {
   for (const auto & name : DefaultParameters::names()) {
     SCOPED_TRACE(name);
+    // Act and assert: constructing is the act
     EXPECT_THROW(
       std::make_shared<RadarObjectsAdapterNode>(DefaultParameters{}.to_options_without(name)),
       std::exception);
@@ -388,6 +389,7 @@ TEST_F(RadarObjectsAdapterNodeTest, Construct_DefaultParameterMissing_Throws)
 // the six default_* parameters alone are enough to construct the node.
 TEST_F(RadarObjectsAdapterNodeTest, Construct_RemapParametersOmitted_Constructs)
 {
+  // Act and assert: constructing is the act
   EXPECT_NO_THROW(std::make_shared<RadarObjectsAdapterNode>(DefaultParameters{}.to_options()));
 }
 
@@ -399,6 +401,7 @@ TEST_F(RadarObjectsAdapterNodeTest, Construct_RemapParametersOmitted_Constructs)
 // additionally remaps MOTORCYCLE and BICYCLE, which the unit tests cover.
 TEST_F(RadarObjectsAdapterNodeTest, Construct_RemapParametersOmitted_BuiltInDefaultsApplied)
 {
+  // Arrange
   RadarObject radar = make_radar_object();
   radar.classifications = {
     make_classification(RadarClassification::CAR, 0.8f),
@@ -407,9 +410,11 @@ TEST_F(RadarObjectsAdapterNodeTest, Construct_RemapParametersOmitted_BuiltInDefa
     make_classification(RadarClassification::HAZARD, 0.05f),
     make_classification(RadarClassification::PEDESTRIAN, 0.02f)};
 
+  // Act
   const auto outputs = run_node_and_collect_outputs(make_radar_info(ars548_fields), {radar});
   ASSERT_TRUE(outputs.has_value());
 
+  // Assert
   const std::vector<LabeledProbability> expected = {
     {ObjectClassification::CAR, 0.8f},
     {ObjectClassification::TRUCK, 0.1f},
@@ -428,18 +433,19 @@ TEST_F(RadarObjectsAdapterNodeTest, Construct_RemapParametersOmitted_BuiltInDefa
 // The warning logged while the gate is closed is not pinned.
 TEST_F(RadarObjectsAdapterNodeTest, Gate_ObjectsBeforeRadarInfo_DroppedNotReplayed)
 {
+  // Arrange: the node is up, and radar objects reach it before any radar info
   start_node();
   ASSERT_TRUE(wait_for_discovery());
-
   send_objects_expecting_no_output(make_radar_objects({make_radar_object()}, first_stamp));
-  EXPECT_TRUE(detections_.empty());
-  EXPECT_TRUE(tracks_.empty());
+  ASSERT_TRUE(detections_.empty());
+  ASSERT_TRUE(tracks_.empty());
 
+  // Act: the radar info arrives, then more radar objects
   send_radar_info(make_radar_info(ars548_fields));
   ASSERT_TRUE(
     send_objects_and_wait_for_outputs(make_radar_objects({make_radar_object()}, second_stamp)));
 
-  // Only the message published after the radar info came through
+  // Assert: only the message published after the radar info came through
   ASSERT_EQ(detections_.size(), 1u);
   EXPECT_EQ(detections_[0]->header.stamp, second_stamp);
   ASSERT_EQ(tracks_.size(), 1u);
@@ -452,12 +458,15 @@ TEST_F(RadarObjectsAdapterNodeTest, Gate_ObjectsBeforeRadarInfo_DroppedNotReplay
 // The contents of the objects are pinned by the conversion tests, not here.
 TEST_F(RadarObjectsAdapterNodeTest, Gate_ValidRadarInfo_ObjectsConverted)
 {
+  // Arrange: the node has seen a radar info that declares every required field
   start_node();
   ASSERT_TRUE(wait_for_discovery());
   send_radar_info(make_radar_info(ars548_fields));
 
+  // Act
   ASSERT_TRUE(send_objects_and_wait_for_outputs(make_radar_objects({make_radar_object()})));
 
+  // Assert
   ASSERT_EQ(detections_.size(), 1u);
   EXPECT_EQ(detections_[0]->header.stamp, first_stamp);
   EXPECT_EQ(detections_[0]->header.frame_id, "base_link");
@@ -475,9 +484,14 @@ TEST_F(RadarObjectsAdapterNodeTest, Gate_ValidRadarInfo_ObjectsConverted)
 // without knowing anything about the conversion.
 TEST_F(RadarObjectsAdapterNodeTest, Conversion_EmptyObjects_PublishesEmptyOutputs)
 {
-  const auto outputs = run_node_and_collect_outputs(make_radar_info(ars548_fields), {});
+  // Arrange
+  const RadarInfo info = make_radar_info(ars548_fields);
+
+  // Act
+  const auto outputs = run_node_and_collect_outputs(info, {});
   ASSERT_TRUE(outputs.has_value());
 
+  // Assert
   EXPECT_EQ(outputs->detections.header.stamp, first_stamp);
   EXPECT_TRUE(outputs->detections.objects.empty());
   EXPECT_EQ(outputs->tracks.header.stamp, first_stamp);
