@@ -40,7 +40,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -158,6 +157,9 @@ public:
   autoware_perception_msgs::msg::TrackedObject operator()(
     const autoware_sensing_msgs::msg::RadarObject & input_object) const;
 
+  // What it converts with.
+  const ConversionConfiguration & configuration() const { return config_; }
+
 private:
   ConversionConfiguration config_;
   GenerateObjectUUID generate_uuid_;
@@ -199,7 +201,9 @@ public:
 };
 
 // Converts radar objects into detected objects and into tracked objects. Learns which fields the
-// radar provides from its radar info messages; until a valid one has arrived, nothing is converted.
+// radar provides from its radar info messages: the first message that declares every required
+// field fixes the answer, and later messages are ignored; until then, each message is judged on
+// its own and nothing is converted.
 class RadarObjectsAdapter
 {
 public:
@@ -212,7 +216,8 @@ public:
   // What the adapter decided from a radar info: the configuration it will convert with (the
   // one given, less the fields the radar provides), or why it cannot convert at all. The node
   // logs this; the adapter is where the field -> parameter pairing lives. Nothing is decided
-  // from an invalid radar info.
+  // from an invalid radar info, and nothing new from a message after the first valid one: that
+  // one comes back with the configuration already fixed.
   tl::expected<ConversionConfiguration, InvalidRadarInfo> update_radar_info(
     const autoware_sensing_msgs::msg::RadarInfo & radar_info_msg);
 
@@ -227,10 +232,10 @@ private:
   GenerateObjectUUID generate_uuid_;
   ClassificationRemapper classification_remapper_;
 
-  std::unordered_map<std::string, autoware_sensing_msgs::msg::RadarFieldInfo> field_info_map_;
   std::vector<std::string> required_attributes_;
 
-  // Set once a radar info has declared every required field; converts nothing before.
+  // Set by the first radar info that declares every required field, and kept; converts nothing
+  // before.
   std::optional<TrackedObjectConverter> tracked_object_converter_;
 };
 
