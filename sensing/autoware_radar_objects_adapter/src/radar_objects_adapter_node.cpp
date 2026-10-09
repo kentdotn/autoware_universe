@@ -39,15 +39,17 @@ RadarObjectsAdapterNode::RadarObjectsAdapterNode(const rclcpp::NodeOptions & opt
   tracks_pub_ = this->create_publisher<autoware_perception_msgs::msg::TrackedObjects>(
     "~/output/tracks", rclcpp::QoS(10).reliable().transient_local());
 
-  RadarObjectsAdapterParams params;
+  // The values used for the object fields the radar does not provide: the configuration for a
+  // radar that provides none of them.
+  ConversionConfiguration config;
 
-  params.default_position_z = this->declare_parameter<float>("default_position_z");
-  params.default_velocity_z = this->declare_parameter<float>("default_velocity_z");
-  params.default_acceleration_z = this->declare_parameter<float>("default_acceleration_z");
+  config.default_position_z = this->declare_parameter<float>("default_position_z");
+  config.default_velocity_z = this->declare_parameter<float>("default_velocity_z");
+  config.default_acceleration_z = this->declare_parameter<float>("default_acceleration_z");
 
-  params.default_size_x = this->declare_parameter<float>("default_size_x");
-  params.default_size_y = this->declare_parameter<float>("default_size_y");
-  params.default_size_z = this->declare_parameter<float>("default_size_z");
+  config.default_size_x = this->declare_parameter<float>("default_size_x");
+  config.default_size_y = this->declare_parameter<float>("default_size_y");
+  config.default_size_z = this->declare_parameter<float>("default_size_z");
 
   // The tracks of this radar are told from those of another by the hash of the input topic name.
   const std::string topic_name = radar_objects_sub_->get_topic_name();
@@ -83,7 +85,7 @@ RadarObjectsAdapterNode::RadarObjectsAdapterNode(const rclcpp::NodeOptions & opt
       perception_label.c_str(), radar_label.c_str());
   }
 
-  adapter_ = std::make_shared<RadarObjectsAdapter>(params, classification_remap, topic_name);
+  adapter_ = std::make_shared<RadarObjectsAdapter>(config, classification_remap, topic_name);
 }
 
 void RadarObjectsAdapterNode::objects_callback(

@@ -45,9 +45,9 @@
 namespace
 {
 using autoware::radar_objects_adapter::ClassificationRemap;
+using autoware::radar_objects_adapter::ConversionConfiguration;
 using autoware::radar_objects_adapter::make_classification_remap_from_string_pair;
 using autoware::radar_objects_adapter::RadarObjectsAdapter;
-using autoware::radar_objects_adapter::RadarObjectsAdapterParams;
 using autoware_perception_msgs::msg::DetectedObject;
 using autoware_perception_msgs::msg::DetectedObjectKinematics;
 using autoware_perception_msgs::msg::ObjectClassification;
@@ -63,18 +63,19 @@ using NameMap = std::map<std::string, std::string>;
 
 constexpr double tolerance = 1e-6;
 
-// Parameter values that no radar object below carries, so that a field filled from a parameter
-// can be told apart from one copied out of the object.
-RadarObjectsAdapterParams make_params()
+// The parameters, as the configuration for a radar that provides no optional field. Values that
+// no radar object below carries, so that a field filled from a parameter can be told apart from
+// one copied out of the object.
+ConversionConfiguration make_config()
 {
-  RadarObjectsAdapterParams params;
-  params.default_position_z = 0.25f;
-  params.default_velocity_z = 0.5f;
-  params.default_acceleration_z = 0.75f;
-  params.default_size_x = 5.0f;
-  params.default_size_y = 2.0f;
-  params.default_size_z = 1.5f;
-  return params;
+  ConversionConfiguration config;
+  config.default_position_z = 0.25;
+  config.default_velocity_z = 0.5;
+  config.default_acceleration_z = 0.75;
+  config.default_size_x = 5.0;
+  config.default_size_y = 2.0;
+  config.default_size_z = 1.5;
+  return config;
 }
 
 // A remap with an identity entry for every radar label the parameters can name, so that the
@@ -137,13 +138,13 @@ std::vector<std::string> without(std::vector<std::string> fields, const std::str
   return fields;
 }
 
-// The six optional fields that have a parameter, with the value make_params() gives each, in the
+// The six optional fields that have a parameter, with the value make_config() gives each, in the
 // order update_radar_info() reports them. orientation_std and orientation_rate_std have no
 // parameter and are never reported.
-using DefaultedField = std::pair<std::string, float>;
-const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25f},     {"velocity_z", 0.5f},
-                                                   {"acceleration_z", 0.75f}, {"size_x", 5.0f},
-                                                   {"size_y", 2.0f},          {"size_z", 1.5f}};
+using DefaultedField = std::pair<std::string, double>;
+const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25},     {"velocity_z", 0.5},
+                                                   {"acceleration_z", 0.75}, {"size_x", 5.0},
+                                                   {"size_y", 2.0},          {"size_z", 1.5}};
 
 std::vector<DefaultedField> all_defaulted_except(const std::string & declared)
 {
@@ -159,7 +160,7 @@ std::vector<DefaultedField> all_defaulted_except(const std::string & declared)
 // An adapter that has seen no radar info.
 RadarObjectsAdapter make_fresh_adapter()
 {
-  return RadarObjectsAdapter(make_params(), identity_remap(), topic_name);
+  return RadarObjectsAdapter(make_config(), identity_remap(), topic_name);
 }
 
 RadarClassification make_classification(std::uint8_t label, float probability)
@@ -223,7 +224,7 @@ RadarObjects make_radar_objects(const std::vector<RadarObject> & objects)
 // An adapter that has seen a radar info declaring the required fields plus `optional`.
 RadarObjectsAdapter make_adapter(const std::vector<std::string> & optional = optional_fields)
 {
-  RadarObjectsAdapter adapter(make_params(), identity_remap(), topic_name);
+  RadarObjectsAdapter adapter(make_config(), identity_remap(), topic_name);
   const auto result = adapter.update_radar_info(make_radar_info(with(required_fields, optional)));
   EXPECT_TRUE(result.has_value());
   return adapter;
@@ -429,7 +430,7 @@ TEST(RadarObjectsAdapter, RadarInfo_UnknownFields_Ignored)
 
 TEST(RadarObjectsAdapter, Convert_NoRadarInfo_NoValidRadarInfo)
 {
-  const RadarObjectsAdapter adapter(make_params(), identity_remap(), topic_name);
+  const RadarObjectsAdapter adapter(make_config(), identity_remap(), topic_name);
 
   const auto result = adapter.convert(make_radar_objects({make_radar_object()}));
 
@@ -439,7 +440,7 @@ TEST(RadarObjectsAdapter, Convert_NoRadarInfo_NoValidRadarInfo)
 
 TEST(RadarObjectsAdapter, Convert_InvalidRadarInfo_NoValidRadarInfo)
 {
-  RadarObjectsAdapter adapter(make_params(), identity_remap(), topic_name);
+  RadarObjectsAdapter adapter(make_config(), identity_remap(), topic_name);
   const auto update = adapter.update_radar_info(make_radar_info({"position_x", "position_y"}));
   ASSERT_FALSE(update.has_value());
 
@@ -520,7 +521,7 @@ TEST(RadarObjectsAdapter, Fields_Required_Copied)
 TEST(RadarObjectsAdapter, Fields_Optional_CopiedWhenDeclaredDefaultedOtherwise)
 {
   const RadarObject radar = make_radar_object();
-  const RadarObjectsAdapterParams params = make_params();
+  const ConversionConfiguration config = make_config();
 
   struct Case
   {
@@ -534,23 +535,23 @@ TEST(RadarObjectsAdapter, Fields_Optional_CopiedWhenDeclaredDefaultedOtherwise)
      [](const DetectedObject & d, const TrackedObject &) {
        return d.kinematics.pose_with_covariance.pose.position.z;
      },
-     radar.position.z, params.default_position_z},
+     radar.position.z, *config.default_position_z},
     {"velocity_z",
      [](const DetectedObject & d, const TrackedObject &) {
        return d.kinematics.twist_with_covariance.twist.linear.z;
      },
-     radar.velocity.z, params.default_velocity_z},
+     radar.velocity.z, *config.default_velocity_z},
     {"acceleration_z",
      [](const DetectedObject &, const TrackedObject & t) {
        return t.kinematics.acceleration_with_covariance.accel.linear.z;
      },
-     radar.acceleration.z, params.default_acceleration_z},
+     radar.acceleration.z, *config.default_acceleration_z},
     {"size_x", [](const DetectedObject & d, const TrackedObject &) { return d.shape.dimensions.x; },
-     radar.size.x, params.default_size_x},
+     radar.size.x, *config.default_size_x},
     {"size_y", [](const DetectedObject & d, const TrackedObject &) { return d.shape.dimensions.y; },
-     radar.size.y, params.default_size_y},
+     radar.size.y, *config.default_size_y},
     {"size_z", [](const DetectedObject & d, const TrackedObject &) { return d.shape.dimensions.z; },
-     radar.size.z, params.default_size_z},
+     radar.size.z, *config.default_size_z},
   };
 
   for (const auto & c : cases) {
@@ -778,7 +779,7 @@ TEST(RadarObjectsAdapter, Tracked_Uuid_ObjectIdThenTopicHashThenZeros)
 // Two adapters on different topics give the same object different ids.
 TEST(RadarObjectsAdapter, Tracked_Uuid_DiffersBetweenTopics)
 {
-  RadarObjectsAdapter other(make_params(), identity_remap(), "/sensing/radar/rear/objects_raw");
+  RadarObjectsAdapter other(make_config(), identity_remap(), "/sensing/radar/rear/objects_raw");
   ASSERT_TRUE(other.update_radar_info(make_radar_info(required_fields)).has_value());
   const RadarObject radar = make_radar_object();
 
@@ -830,7 +831,7 @@ TEST(RadarObjectsAdapter, Tracked_SharedFields_MatchDetected)
 TEST(RadarObjectsAdapter, Classification_RemapApplied_OrderAndProbabilitiesKept)
 {
   RadarObjectsAdapter adapter(
-    make_params(),
+    make_config(),
     ClassificationRemap{
       {RadarClassification::CAR, ObjectClassification::CAR},
       {RadarClassification::MOTORCYCLE, ObjectClassification::CAR},
@@ -907,7 +908,7 @@ const NameMap shipped_configuration = {{"UNKNOWN", "UNKNOWN"}, {"CAR", "CAR"},
 // An adapter with a valid radar info and the remap built from `names`.
 RadarObjectsAdapter make_adapter_with_remap(const NameMap & names)
 {
-  RadarObjectsAdapter adapter(make_params(), make_remap(names).remap, topic_name);
+  RadarObjectsAdapter adapter(make_config(), make_remap(names).remap, topic_name);
   const auto result = adapter.update_radar_info(make_radar_info(required_fields));
   EXPECT_TRUE(result.has_value());
   return adapter;
