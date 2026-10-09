@@ -105,9 +105,9 @@ private:
 using GenerateObjectUUID =
   std::function<unique_identifier_msgs::msg::UUID::_uuid_type(std::uint32_t object_id)>;
 
-// The way the node makes them: the id, least significant byte first, then the hash of the input
-// topic name, least significant byte first, then zeros. The hash tells the tracks of one radar
-// from those of another when they are merged downstream.
+// The way the node makes them: the id, least significant byte first, then 8 bytes of the hash of
+// the input topic name, least significant byte first, then 4 zero bytes. The hash tells the
+// tracks of one radar from those of another when they are merged downstream.
 class ObjectUUIDGenerator
 {
 public:
@@ -116,7 +116,8 @@ public:
   unique_identifier_msgs::msg::UUID::_uuid_type operator()(std::uint32_t object_id) const;
 
 private:
-  std::array<std::uint8_t, sizeof(std::size_t)> topic_hash_code_;
+  // The 8 bytes of the UUID that follow the 4-byte object id.
+  std::array<std::uint8_t, 8> topic_hash_code_{};
 };
 
 // How the optional object fields are filled when a radar object is converted. Each of the six
