@@ -102,10 +102,10 @@ struct DefaultParameters
 // The six optional fields that have a parameter, with the value DefaultParameters gives each, in
 // the order update_radar_info() reports them. orientation_std and orientation_rate_std have no
 // parameter and are never reported.
-using DefaultedField = std::pair<std::string, float>;
-const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25f},     {"velocity_z", 0.5f},
-                                                   {"acceleration_z", 0.75f}, {"size_x", 5.0f},
-                                                   {"size_y", 2.0f},          {"size_z", 1.5f}};
+using DefaultedField = std::pair<std::string, double>;
+const std::vector<DefaultedField> all_defaulted = {{"position_z", 0.25},     {"velocity_z", 0.5},
+                                                   {"acceleration_z", 0.75}, {"size_x", 5.0},
+                                                   {"size_y", 2.0},          {"size_z", 1.5}};
 
 std::vector<DefaultedField> all_defaulted_except(const std::string & declared)
 {
