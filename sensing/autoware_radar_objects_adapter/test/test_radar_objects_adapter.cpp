@@ -89,12 +89,12 @@ struct DefaultParameters
   [[nodiscard]] RadarObjectsAdapterParams to_params() const
   {
     RadarObjectsAdapterParams params;
-    params.default_position_z = static_cast<float>(position_z);
-    params.default_velocity_z = static_cast<float>(velocity_z);
-    params.default_acceleration_z = static_cast<float>(acceleration_z);
-    params.default_size_x = static_cast<float>(size_x);
-    params.default_size_y = static_cast<float>(size_y);
-    params.default_size_z = static_cast<float>(size_z);
+    params.default_position_z = position_z;
+    params.default_velocity_z = velocity_z;
+    params.default_acceleration_z = acceleration_z;
+    params.default_size_x = size_x;
+    params.default_size_y = size_y;
+    params.default_size_z = size_z;
     return params;
   }
 };

@@ -202,12 +202,12 @@ public:
 // as the node hands them to the adapter.
 struct RadarObjectsAdapterParams
 {
-  float default_position_z{0.0f};
-  float default_velocity_z{0.0f};
-  float default_acceleration_z{0.0f};
-  float default_size_x{0.0f};
-  float default_size_y{0.0f};
-  float default_size_z{0.0f};
+  double default_position_z{0.0};
+  double default_velocity_z{0.0};
+  double default_acceleration_z{0.0};
+  double default_size_x{0.0};
+  double default_size_y{0.0};
+  double default_size_z{0.0};
 
   // The configuration for a radar that provides no optional field: each parameter in place of
   // its field. The adapter takes away the entries for the fields a radar info declares.
