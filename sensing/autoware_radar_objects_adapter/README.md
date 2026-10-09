@@ -14,6 +14,11 @@ This parameter allows remapping of classification labels from `autoware_sensing_
 
 For example, the current default configuration remaps `MOTORCYCLE` and `BICYCLE` from radar classification to `CAR` in the perception classification, while keeping other labels unchanged.
 
+The remap serves two purposes:
+
+- Labels the perception pipeline does not use (`HAZARD`, `OVER_DRIVABLE`, `UNDER_DRIVABLE`) are mapped to `UNKNOWN`. This holds for any radar.
+- Labels a particular radar is known to report unreliably are corrected. The shipped configuration is tuned for the radar in use; it is not a property of radars in general and should be reviewed when another radar is connected.
+
 **Note**: If multiple radar labels are remapped to the same perception label, multiple probabilities may appear for that label.
 This does not violate any logic in Autoware but may be worth monitoring.
 
