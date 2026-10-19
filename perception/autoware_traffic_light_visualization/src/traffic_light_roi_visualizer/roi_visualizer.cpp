@@ -26,8 +26,8 @@
 #include <opencv2/imgproc/imgproc_c.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,120 +36,72 @@ namespace autoware::traffic_light
 {
 namespace
 {
-/// Parsed form of a label string.
-struct TrafficLightShapeInfo
-{
-  cv::Scalar color;                 //!< Color associated with "circle".
-  std::vector<std::string> shapes;  //!< Shape names.
-};
-
-// The word a TrafficLightElement code contributes to a label.
-std::string state_to_label(int state)
-{
-  using tier4_perception_msgs::msg::TrafficLightElement;
-  static const std::map<int, std::string> table{
-    // color
-    {TrafficLightElement::RED, "red"},
-    {TrafficLightElement::AMBER, "yellow"},
-    {TrafficLightElement::GREEN, "green"},
-    {TrafficLightElement::WHITE, "white"},
-    // shape
-    {TrafficLightElement::CIRCLE, "circle"},
-    {TrafficLightElement::LEFT_ARROW, "left"},
-    {TrafficLightElement::RIGHT_ARROW, "right"},
-    {TrafficLightElement::UP_ARROW, "straight"},
-    {TrafficLightElement::DOWN_ARROW, "down"},
-    {TrafficLightElement::UP_LEFT_ARROW, "straight_left"},
-    {TrafficLightElement::UP_RIGHT_ARROW, "straight_right"},
-    {TrafficLightElement::DOWN_LEFT_ARROW, "down_left"},
-    {TrafficLightElement::DOWN_RIGHT_ARROW, "down_right"},
-    {TrafficLightElement::CROSS, "cross"},
-    // other
-    {TrafficLightElement::UNKNOWN, "unknown"},
-  };
-
-  const auto found = table.find(state);
-  return found == table.end() ? table.at(TrafficLightElement::UNKNOWN) : found->second;
-}
-
-// The palette, named after the label words; the message calls yellow AMBER.
+// The palette, named after the signal colors; the message calls yellow AMBER.
 const cv::Scalar red_color{230, 115, 115};    // #E67373
 const cv::Scalar yellow_color{242, 191, 36};  // #F2BF24
 const cv::Scalar green_color{153, 255, 178};  // #99FFB2
-// Every other case: an unrecognized circle color, no circle in the label, or no signal at all.
+// Every other case: an unrecognized circle color, no circle in the signal, or no signal at all.
 const cv::Scalar unknown_color{250, 250, 250};  // #FAFAFA
 
 /**
- * @brief Return RGB color from color string associated with "circle".
- * @param color Color string.
- * @return RGB color.
+ * @brief The color the frames of one traffic light are drawn in.
+ *
+ * Only a circle carries a color the palette names. An arrow, a color code the palette does not
+ * name and a signal with no circle in it all come out in `unknown_color`. A traffic light shows
+ * one circle at a time; should a signal report several, the last of them decides.
  */
-cv::Scalar str_to_color(const std::string & color)
+cv::Scalar frame_color(
+  const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements)
 {
-  if (color == "red") {
-    return red_color;
-  } else if (color == "yellow") {
-    return yellow_color;
-  } else if (color == "green") {
-    return green_color;
-  } else {
-    return unknown_color;
+  using tier4_perception_msgs::msg::TrafficLightElement;
+  static const std::map<uint8_t, cv::Scalar> palette{
+    {TrafficLightElement::RED, red_color},
+    {TrafficLightElement::AMBER, yellow_color},
+    {TrafficLightElement::GREEN, green_color},
+  };
+
+  cv::Scalar color = unknown_color;
+  for (const auto & element : elements) {
+    if (element.shape != TrafficLightElement::CIRCLE) {
+      continue;
+    }
+    const auto found = palette.find(element.color);
+    color = found == palette.end() ? unknown_color : found->second;
   }
+  return color;
+}
+
+/// The shapes the label box holds, one per lamp, in the order they were reported.
+std::vector<uint8_t> shape_codes(
+  const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements)
+{
+  std::vector<uint8_t> shapes;
+  shapes.reserve(elements.size());
+  for (const auto & element : elements) {
+    shapes.push_back(element.shape);
+  }
+  return shapes;
+}
+
+/// The confidence the label box shows. All the lamps of one signal carry the same one.
+float confidence_of(const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements)
+{
+  return elements.empty() ? 0.0f : static_cast<float>(elements.back().confidence);
 }
 
 /**
- * @brief Extract color and shape names from label.
- * @param label String formatted as `<Color0>-<Shape0>,<Color1>-<Shape1>,...,<ColorN>-<ShapeN>`.
- * @return Extracted information includes a color associated with "circle" and shape names.
+ * @brief The lamps reported for `id`, or nullptr if no signal was reported for it.
+ *
+ * Should an array carry the id more than once - which the detection chain is not expected to
+ * produce - the first of them is the result, the choice get_roi_from_id makes for the ROIs.
  */
-TrafficLightShapeInfo extract_shape_info(const std::string & label)
-{
-  cv::Scalar color = unknown_color;
-  std::vector<std::string> shapes;
-
-  std::stringstream ss(label);
-  std::string segment;
-  while (std::getline(ss, segment, ',')) {
-    size_t hyphen_pos = segment.find('-');
-    if (hyphen_pos != std::string::npos) {
-      auto shape = segment.substr(hyphen_pos + 1);
-      if (shape == "circle") {
-        const auto color_str = segment.substr(0, hyphen_pos);
-        color = str_to_color(color_str);
-      }
-      shapes.emplace_back(shape);
-    }
-  }
-  return {color, shapes};
-}
-
-// The classification reported for `id`, if any. Should an array carry the id more than once -
-// which the detection chain is not expected to produce - the first of them is the result, the
-// choice get_roi_from_id makes for the ROIs. Reading them all would append one label to another
-// with no separator between, leaving a string the drawing cannot read back.
-bool get_classification_result(
-  int id, const tier4_perception_msgs::msg::TrafficLightArray & traffic_signals,
-  ClassificationResult & result)
+const std::vector<tier4_perception_msgs::msg::TrafficLightElement> * find_classification(
+  int id, const tier4_perception_msgs::msg::TrafficLightArray & traffic_signals)
 {
   const auto found = std::find_if(
     traffic_signals.signals.begin(), traffic_signals.signals.end(),
     [id](const auto & traffic_signal) { return id == traffic_signal.traffic_light_id; });
-  if (found == traffic_signals.signals.end()) {
-    return false;
-  }
-
-  bool is_first = true;
-  for (const auto & element : found->elements) {
-    if (!is_first) {
-      result.label += ",";
-    }
-    is_first = false;
-
-    // all lamp confidence are the same
-    result.prob = element.confidence;
-    result.label += (state_to_label(element.color) + "-" + state_to_label(element.shape));
-  }
-  return true;
+  return found == traffic_signals.signals.end() ? nullptr : &found->elements;
 }
 
 bool get_roi_from_id(
@@ -188,20 +140,21 @@ TrafficLightRoiVisualizer::TrafficLightRoiVisualizer(std::string shape_image_dir
 
 bool TrafficLightRoiVisualizer::draw_roi_with_label(
   cv::Mat & image, const tier4_perception_msgs::msg::TrafficLightRoi & tl_roi,
-  const ClassificationResult & result) const
+  const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements) const
 {
-  const auto info = extract_shape_info(result.label);
+  const auto color = frame_color(elements);
 
   cv::rectangle(
     image, cv::Point(tl_roi.roi.x_offset, tl_roi.roi.y_offset),
     cv::Point(tl_roi.roi.x_offset + tl_roi.roi.width, tl_roi.roi.y_offset + tl_roi.roi.height),
-    info.color, 2);
+    color, 2);
 
   constexpr int shape_img_size = 16;
   const auto position = cv::Point(tl_roi.roi.x_offset, tl_roi.roi.y_offset);
 
   visualization::draw_traffic_light_shape(
-    image, shape_image_dir_, info.shapes, shape_img_size, position, info.color, result.prob);
+    image, shape_image_dir_, shape_codes(elements), shape_img_size, position, color,
+    confidence_of(elements));
 
   return true;
 }
@@ -215,16 +168,14 @@ sensor_msgs::msg::Image::SharedPtr TrafficLightRoiVisualizer::visualize(
   const auto cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::RGB8);
 
   for (auto tl_roi : rois.rois) {
-    ClassificationResult result;
-    bool has_correspond_traffic_signal =
-      get_classification_result(tl_roi.traffic_light_id, traffic_signals, result);
+    const auto * elements = find_classification(tl_roi.traffic_light_id, traffic_signals);
 
-    if (!has_correspond_traffic_signal) {
+    if (elements == nullptr) {
       // does not have classification result
       draw_roi_with_id(cv_ptr->image, tl_roi, unknown_color);
     } else {
       // has classification result
-      draw_roi_with_label(cv_ptr->image, tl_roi, result);
+      draw_roi_with_label(cv_ptr->image, tl_roi, *elements);
     }
   }
 
@@ -244,18 +195,17 @@ sensor_msgs::msg::Image::SharedPtr TrafficLightRoiVisualizer::visualize_with_rou
     // note: a signal will still be output even if it is undetected
     // Its position and size will be set as 0 and the color will be set as unknown
     // So a rough roi will always have correspond roi a correspond traffic signal
-    ClassificationResult result;
-    bool has_correspond_traffic_signal =
-      get_classification_result(tl_rough_roi.traffic_light_id, traffic_signals, result);
+    const auto * elements = find_classification(tl_rough_roi.traffic_light_id, traffic_signals);
+    const auto signal_color = elements == nullptr ? unknown_color : frame_color(*elements);
     tier4_perception_msgs::msg::TrafficLightRoi tl_roi;
     bool has_correspond_roi = get_roi_from_id(tl_rough_roi.traffic_light_id, rois, tl_roi);
 
     if (has_correspond_roi) {
-      draw_roi_with_id(cv_ptr->image, tl_rough_roi, extract_shape_info(result.label).color);
+      draw_roi_with_id(cv_ptr->image, tl_rough_roi, signal_color);
 
-      if (has_correspond_traffic_signal) {
+      if (elements != nullptr) {
         // has fine detection and classification results
-        draw_roi_with_label(cv_ptr->image, tl_roi, result);
+        draw_roi_with_label(cv_ptr->image, tl_roi, *elements);
       } else {
         // has fine detection result and does not have classification result
         draw_roi_with_id(cv_ptr->image, tl_roi, unknown_color);
@@ -263,12 +213,12 @@ sensor_msgs::msg::Image::SharedPtr TrafficLightRoiVisualizer::visualize_with_rou
     } else {
       // these cases are not expected, but could happen on some unpredictable conditions
 
-      if (has_correspond_traffic_signal) {
+      if (elements != nullptr) {
         // does not have fine detection result and has classification result: the label goes on
         // the rough ROI, so it takes the place of the id rather than being painted over it
-        draw_roi_with_label(cv_ptr->image, tl_rough_roi, result);
+        draw_roi_with_label(cv_ptr->image, tl_rough_roi, *elements);
       } else {
-        draw_roi_with_id(cv_ptr->image, tl_rough_roi, extract_shape_info(result.label).color);
+        draw_roi_with_id(cv_ptr->image, tl_rough_roi, signal_color);
       }
     }
   }

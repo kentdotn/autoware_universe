@@ -18,19 +18,15 @@
 
 #include <sensor_msgs/msg/image.hpp>
 #include <tier4_perception_msgs/msg/traffic_light_array.hpp>
+#include <tier4_perception_msgs/msg/traffic_light_element.hpp>
 #include <tier4_perception_msgs/msg/traffic_light_roi.hpp>
 #include <tier4_perception_msgs/msg/traffic_light_roi_array.hpp>
 
 #include <string>
+#include <vector>
 
 namespace autoware::traffic_light
 {
-struct ClassificationResult
-{
-  float prob = 0.0;
-  std::string label;
-};
-
 /**
  * @brief Draws the traffic light detection results onto a camera image.
  *
@@ -75,10 +71,11 @@ public:
     const tier4_perception_msgs::msg::TrafficLightArray & traffic_signals) const;
 
 private:
-  /// Draws the ROI in the color of `result` and a label box with its shape and confidence.
+  /// Draws the ROI in the color of the lamps reported for it, and a label box with their shapes
+  /// and confidence.
   bool draw_roi_with_label(
     cv::Mat & image, const tier4_perception_msgs::msg::TrafficLightRoi & tl_roi,
-    const ClassificationResult & result) const;
+    const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements) const;
 
   /// Where the shape icons live. Held here so that the drawing needs no package lookup.
   std::string shape_image_dir_;
