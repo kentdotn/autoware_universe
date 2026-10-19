@@ -22,7 +22,7 @@
 #endif
 #include <opencv2/imgproc/imgproc_c.h>
 
-#include <functional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -67,128 +67,18 @@ cv::Mat load_shape_image(
   double scale_factor = 0.3);
 
 /**
- * @brief Load parameter of circle.
- *
- * @return Parameter of circle.
- */
-inline ShapeImgParam circle_img_param()
-{
-  return {"circle.png", false, false};
-}
-
-/**
- * @brief Load parameter of left-arrow.
- *
- * @return Parameter of left-arrow.
- */
-inline ShapeImgParam left_arrow_img_param()
-{
-  return {"left_arrow.png", false, false};
-}
-
-/**
- * @brief Load parameter of right-arrow.
- *
- * @return Parameter of right-arrow, the image is flipped left-arrow horizontally.
- */
-inline ShapeImgParam right_arrow_img_param()
-{
-  return {"left_arrow.png", true, false};
-}
-
-/**
- * @brief Load parameter of straight-arrow.
- *
- * @return Parameter of straight-arrow.
- */
-inline ShapeImgParam straight_arrow_img_param()
-{
-  return {"straight_arrow.png", false, false};
-}
-
-/**
- * @brief Load parameter of down-arrow.
- *
- * @return Parameter of down-arrow, the image is flipped straight-arrow vertically.
- */
-inline ShapeImgParam down_arrow_img_param()
-{
-  return {"straight_arrow.png", false, true};
-}
-
-/**
- * @brief Load parameter of straight-left-arrow.
- *
- * @return Parameter of straight-left-arrow, the image is flipped down-left-arrow vertically.
- */
-inline ShapeImgParam straight_left_arrow_img_param()
-{
-  return {"down_left_arrow.png", false, true};
-}
-
-/**
- * @brief Load parameter of straight-right-arrow.
- *
- * @return Parameter of straight-right-arrow, the image is flipped down-left-arrow both horizontally
- * and vertically.
- */
-inline ShapeImgParam straight_right_arrow_img_param()
-{
-  return {"down_left_arrow.png", true, true};
-}
-
-/**
- * @brief Load parameter of down-left-arrow.
- *
- * @return Parameter of down-left-arrow.
- */
-inline ShapeImgParam down_left_arrow_img_param()
-{
-  return {"down_left_arrow.png", false, false};
-}
-
-/**
- * @brief Load parameter of down-right-arrow.
- *
- * @return Parameter of down-right-arrow, the image is flipped straight-arrow horizontally.
- */
-inline ShapeImgParam down_right_arrow_img_param()
-{
-  return {"down_left_arrow.png", true, false};
-}
-
-/**
- * @brief Load parameter of cross-arrow.
- *
- * @return Parameter of cross-arrow.
- */
-inline ShapeImgParam cross_img_param()
-{
-  return {"cross.png", false, false};
-}
-
-/**
- * @brief Load parameter of unknown shape.
- *
- * @return Parameter of unkown shape.
- */
-inline ShapeImgParam unknown_img_param()
-{
-  return {"unknown.png", false, false};
-}
-
-/**
  * @brief Draw traffic light shapes on the camera view image.
  * @param image Camera view image.
  * @param image_dir Directory holding the shape images.
- * @param shapes Shape names.
+ * @param shapes Shape codes, as TrafficLightElement defines them. A code with no image of its
+ * own is drawn as the unknown shape.
  * @param size Shape image size to resize.
  * @param position Top-left position of a ROI.
  * @param color Color of traffic light.
  * @param probability Classification probability.
  */
 void draw_traffic_light_shape(
-  cv::Mat & image, const std::string & image_dir, const std::vector<std::string> & shapes, int size,
+  cv::Mat & image, const std::string & image_dir, const std::vector<uint8_t> & shapes, int size,
   const cv::Point & position, const cv::Scalar & color, float probability);
 
 }  // namespace autoware::traffic_light::visualization

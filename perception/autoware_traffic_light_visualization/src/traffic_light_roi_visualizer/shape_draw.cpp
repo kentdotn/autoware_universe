@@ -17,11 +17,14 @@
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
 
+#include <tier4_perception_msgs/msg/traffic_light_element.hpp>
+
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <map>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace autoware::traffic_light::visualization
@@ -116,30 +119,34 @@ cv::Mat load_shape_image(
 }
 
 void draw_traffic_light_shape(
-  cv::Mat & image, const std::string & image_dir, const std::vector<std::string> & shapes, int size,
+  cv::Mat & image, const std::string & image_dir, const std::vector<uint8_t> & shapes, int size,
   const cv::Point & position, const cv::Scalar & color, float probability)
 {
-  using ShapeImgParamFunction = std::function<ShapeImgParam()>;
+  using tier4_perception_msgs::msg::TrafficLightElement;
 
-  static const std::unordered_map<std::string, ShapeImgParamFunction> shape_to_param_function = {
-    {"circle", circle_img_param},
-    {"left", left_arrow_img_param},
-    {"right", right_arrow_img_param},
-    {"straight", straight_arrow_img_param},
-    {"down", down_arrow_img_param},
-    {"straight_left", straight_left_arrow_img_param},
-    {"straight_right", straight_right_arrow_img_param},
-    {"down_left", down_left_arrow_img_param},
-    {"down_right", down_right_arrow_img_param},
-    {"cross", cross_img_param},
-    {"unknown", unknown_img_param}};
+  // One image per shape, some of them the same file flipped. A code the table does not name is
+  // drawn as the unknown shape, so that something is shown rather than nothing.
+  static const std::map<uint8_t, ShapeImgParam> shape_to_param{
+    {TrafficLightElement::CIRCLE, {"circle.png", false, false}},
+    {TrafficLightElement::LEFT_ARROW, {"left_arrow.png", false, false}},
+    {TrafficLightElement::RIGHT_ARROW, {"left_arrow.png", true, false}},
+    {TrafficLightElement::UP_ARROW, {"straight_arrow.png", false, false}},
+    {TrafficLightElement::DOWN_ARROW, {"straight_arrow.png", false, true}},
+    {TrafficLightElement::UP_LEFT_ARROW, {"down_left_arrow.png", false, true}},
+    {TrafficLightElement::UP_RIGHT_ARROW, {"down_left_arrow.png", true, true}},
+    {TrafficLightElement::DOWN_LEFT_ARROW, {"down_left_arrow.png", false, false}},
+    {TrafficLightElement::DOWN_RIGHT_ARROW, {"down_left_arrow.png", true, false}},
+    {TrafficLightElement::CROSS, {"cross.png", false, false}},
+    {TrafficLightElement::UNKNOWN, {"unknown.png", false, false}},
+  };
 
   std::vector<ShapeImgParam> params;
+  params.reserve(shapes.size());
   for (const auto & shape : shapes) {
-    if (shape_to_param_function.find(shape) != shape_to_param_function.end()) {
-      auto func = shape_to_param_function.at(shape);
-      params.emplace_back(func());
-    }
+    const auto found = shape_to_param.find(shape);
+    params.emplace_back(
+      found == shape_to_param.end() ? shape_to_param.at(TrafficLightElement::UNKNOWN)
+                                    : found->second);
   }
 
   draw_shape(image, image_dir, params, size, position, color, probability);

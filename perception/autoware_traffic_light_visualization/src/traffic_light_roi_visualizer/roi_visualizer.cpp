@@ -26,6 +26,7 @@
 #include <opencv2/imgproc/imgproc_c.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <utility>
@@ -70,39 +71,16 @@ cv::Scalar frame_color(
   return color;
 }
 
-/// The icon draw_traffic_light_shape loads for a shape code. A code the table does not name is
-/// drawn as the unknown shape, so that something is shown rather than nothing.
-std::string shape_to_icon_name(uint8_t shape)
-{
-  using tier4_perception_msgs::msg::TrafficLightElement;
-  static const std::map<uint8_t, std::string> table{
-    {TrafficLightElement::CIRCLE, "circle"},
-    {TrafficLightElement::LEFT_ARROW, "left"},
-    {TrafficLightElement::RIGHT_ARROW, "right"},
-    {TrafficLightElement::UP_ARROW, "straight"},
-    {TrafficLightElement::DOWN_ARROW, "down"},
-    {TrafficLightElement::UP_LEFT_ARROW, "straight_left"},
-    {TrafficLightElement::UP_RIGHT_ARROW, "straight_right"},
-    {TrafficLightElement::DOWN_LEFT_ARROW, "down_left"},
-    {TrafficLightElement::DOWN_RIGHT_ARROW, "down_right"},
-    {TrafficLightElement::CROSS, "cross"},
-    {TrafficLightElement::UNKNOWN, "unknown"},
-  };
-
-  const auto found = table.find(shape);
-  return found == table.end() ? table.at(TrafficLightElement::UNKNOWN) : found->second;
-}
-
-/// The icons the label box holds, one per lamp, in the order they were reported.
-std::vector<std::string> icon_names(
+/// The shapes the label box holds, one per lamp, in the order they were reported.
+std::vector<uint8_t> shape_codes(
   const std::vector<tier4_perception_msgs::msg::TrafficLightElement> & elements)
 {
-  std::vector<std::string> names;
-  names.reserve(elements.size());
+  std::vector<uint8_t> shapes;
+  shapes.reserve(elements.size());
   for (const auto & element : elements) {
-    names.push_back(shape_to_icon_name(element.shape));
+    shapes.push_back(element.shape);
   }
-  return names;
+  return shapes;
 }
 
 /// The confidence the label box shows. All the lamps of one signal carry the same one.
@@ -175,7 +153,7 @@ bool TrafficLightRoiVisualizer::draw_roi_with_label(
   const auto position = cv::Point(tl_roi.roi.x_offset, tl_roi.roi.y_offset);
 
   visualization::draw_traffic_light_shape(
-    image, shape_image_dir_, icon_names(elements), shape_img_size, position, color,
+    image, shape_image_dir_, shape_codes(elements), shape_img_size, position, color,
     confidence_of(elements));
 
   return true;
