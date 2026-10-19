@@ -25,6 +25,7 @@
 #endif
 #include <opencv2/imgproc/imgproc_c.h>
 
+#include <algorithm>
 #include <map>
 #include <sstream>
 #include <string>
@@ -122,27 +123,33 @@ TrafficLightShapeInfo extract_shape_info(const std::string & label)
   return {color, shapes};
 }
 
+// The classification reported for `id`, if any. Should an array carry the id more than once -
+// which the detection chain is not expected to produce - the first of them is the result, the
+// choice get_roi_from_id makes for the ROIs. Reading them all would append one label to another
+// with no separator between, leaving a string the drawing cannot read back.
 bool get_classification_result(
   int id, const tier4_perception_msgs::msg::TrafficLightArray & traffic_signals,
   ClassificationResult & result)
 {
-  bool has_correspond_traffic_signal = false;
-  for (const auto & traffic_signal : traffic_signals.signals) {
-    if (id != traffic_signal.traffic_light_id) {
-      continue;
-    }
-    has_correspond_traffic_signal = true;
-    for (size_t i = 0; i < traffic_signal.elements.size(); i++) {
-      auto element = traffic_signal.elements.at(i);
-      // all lamp confidence are the same
-      result.prob = element.confidence;
-      result.label += (state_to_label(element.color) + "-" + state_to_label(element.shape));
-      if (i < traffic_signal.elements.size() - 1) {
-        result.label += ",";
-      }
-    }
+  const auto found = std::find_if(
+    traffic_signals.signals.begin(), traffic_signals.signals.end(),
+    [id](const auto & traffic_signal) { return id == traffic_signal.traffic_light_id; });
+  if (found == traffic_signals.signals.end()) {
+    return false;
   }
-  return has_correspond_traffic_signal;
+
+  bool is_first = true;
+  for (const auto & element : found->elements) {
+    if (!is_first) {
+      result.label += ",";
+    }
+    is_first = false;
+
+    // all lamp confidence are the same
+    result.prob = element.confidence;
+    result.label += (state_to_label(element.color) + "-" + state_to_label(element.shape));
+  }
+  return true;
 }
 
 bool get_roi_from_id(
