@@ -31,7 +31,8 @@ namespace autoware::radar_objects_adapter
 // Maps for classification remapping
 const std::map<std::string, RadarClassification::_label_type> RADAR_LABEL_TO_UINT_MAP = {
   {"UNKNOWN", RadarClassification::UNKNOWN}, {"CAR", RadarClassification::CAR},
-  {"TRUCK", RadarClassification::TRUCK},     {"MOTORCYCLE", RadarClassification::MOTORCYCLE},
+  {"TRUCK", RadarClassification::TRUCK},     {"BUS", RadarClassification::BUS},
+  {"TRAILER", RadarClassification::TRAILER}, {"MOTORCYCLE", RadarClassification::MOTORCYCLE},
   {"BICYCLE", RadarClassification::BICYCLE}, {"PEDESTRIAN", RadarClassification::PEDESTRIAN},
   {"ANIMAL", RadarClassification::ANIMAL},   {"HAZARD", RadarClassification::HAZARD}};
 const std::map<std::string, ObjectClassification::_label_type> OBJECT_LABEL_TO_UINT_MAP = {
