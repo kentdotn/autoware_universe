@@ -146,6 +146,19 @@ TrafficLightArray make_signal(
   return make_signals(traffic_light_id, {{color, shape}}, confidence);
 }
 
+// Several signals reported for the same id, one element each. The detection chain reports an id
+// once, so this is an input it is not expected to produce.
+TrafficLightArray make_signals_sharing_id(
+  int64_t traffic_light_id, const std::vector<std::pair<uint8_t, uint8_t>> & color_and_shapes)
+{
+  TrafficLightArray array;
+  for (const auto & [color, shape] : color_and_shapes) {
+    const auto one = make_signal(traffic_light_id, color, shape);
+    array.signals.push_back(one.signals.front());
+  }
+  return array;
+}
+
 Pixel pixel_at(const Image & image, int x, int y)
 {
   const size_t offset = static_cast<size_t>(y) * image.step + static_cast<size_t>(x) * 3;
@@ -309,6 +322,26 @@ TEST(TrafficLightRoiVisualizer, SignalReportedForAnotherIdIsNotUsed)
   EXPECT_EQ(frame_corner, unknown_rgb);
   const auto above_the_roi = label_box_pixel(*output, fine_box);
   EXPECT_EQ(above_the_roi, background_rgb);
+}
+
+TEST(TrafficLightRoiVisualizer, DuplicateIdTakesTheFirstSignalReported)
+{
+  // Arrange: the same id reported twice, first red and then green. Only one of them can decide
+  // the frame, and the first is the one taken, as get_roi_from_id does for the ROIs.
+  const auto signals = make_signals_sharing_id(
+    signal_id, {{TrafficLightElement::RED, TrafficLightElement::CIRCLE},
+                {TrafficLightElement::GREEN, TrafficLightElement::CIRCLE}});
+  const auto visualizer = make_visualizer();
+
+  // Act
+  const auto output = visualizer.visualize(background_image, fine_rois, signals);
+  ASSERT_NE(output, nullptr);
+
+  // Assert: the frame is red, and the label box carries the one shape icon of that signal
+  const auto frame_corner = pixel_at(*output, fine_box.x, fine_box.y);
+  EXPECT_EQ(frame_corner, red_signal_rgb);
+  EXPECT_EQ(label_box_pixel(*output, fine_box), red_signal_rgb);
+  EXPECT_EQ(label_icon_pixel(*output, fine_box), label_icon_rgb);
 }
 
 TEST(TrafficLightRoiVisualizer, EveryRoiInArrayIsDrawn)
@@ -492,6 +525,24 @@ TEST(TrafficLightRoiVisualizer, CircleDecidesColorAmongSeveralElements)
   // once.
   const auto signal = make_signals(
     signal_id, {{TrafficLightElement::RED, TrafficLightElement::LEFT_ARROW},
+                {TrafficLightElement::GREEN, TrafficLightElement::CIRCLE}});
+  const auto visualizer = make_visualizer();
+
+  // Act
+  const auto output = visualizer.visualize(background_image, fine_rois, signal);
+  ASSERT_NE(output, nullptr);
+
+  // Assert
+  const auto frame_corner = pixel_at(*output, fine_box.x, fine_box.y);
+  EXPECT_EQ(frame_corner, green_signal_rgb);
+}
+
+TEST(TrafficLightRoiVisualizer, TwoCirclesInOneSignalTakeTheColorOfTheLast)
+{
+  // Arrange: a signal reporting two circles at once, which a traffic light cannot show. The
+  // frame has one color, so one of them has to win; it is the last.
+  const auto signal = make_signals(
+    signal_id, {{TrafficLightElement::RED, TrafficLightElement::CIRCLE},
                 {TrafficLightElement::GREEN, TrafficLightElement::CIRCLE}});
   const auto visualizer = make_visualizer();
 
